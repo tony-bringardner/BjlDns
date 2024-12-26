@@ -1,0 +1,64 @@
+@	IN	SOA	ns1.bar.com. postmaster.bar.com. (
+			2007011001      ; serial
+                        3600    ; refresh (1 hour)
+                        1800    ; retry (30 mins)
+                        1209600  ; expire (14 days)
+                        3600 )  ; minimum (1 hour)
+
+		NS	ns1
+		NS	ns2
+		MX	1 mail
+		TXT 	"v=spf1 +mx -all"
+		TXT 	"LGT/dARyfCqiakdQE+UM46WnYIFPEOuXuw/VcctR5bM="
+		
+_dmarc 	IN	TXT	"v=DMARC1;p=quarantine;sp=quarantine;pct=100;rua=mailto:postmaster@bar.com;"
+ns1	IN	A 	111.69.95.39
+ns2	IN	A 	111.69.215.66
+ns3	IN	A 	110.236.140.160
+dns	IN	A 	111.69.95.39
+dns2	IN	A 	111.69.215.66
+dns3	IN	A 	110.236.140.160
+mail	IN	A 	111.69.95.39
+bar.com.		IN	A 	111.69.95.39
+*.bar.com.	IN	A 	111.69.95.39
+		
+_amazonses.*.*	IN	 TXT 	"LGT/dARyfCqiakdQE+UM46WnYIFPEOuXuw/VcctR5bM="
+
+
+;  Global record  for common domains
+*.*.	IN	A 	111.69.95.39
+		NS	dns
+		NS	dns2
+		NS	dns3
+		MX	1 mail
+		TXT 	"v=spf1 +mx -all"
+		TXT 	"LGT/dARyfCqiakdQE+UM46WnYIFPEOuXuw/VcctR5bM="
+		
+
+;  Global record  for www.xxx.us
+*.*.*.	IN	A 	111.69.95.39
+		NS	dns
+		NS	dns2
+		NS	dns3
+		MX	1 mail
+		TXT 	"v=spf1 +mx -all"
+		TXT 	"LGT/dARyfCqiakdQE+UM46WnYIFPEOuXuw/VcctR5bM="
+		
+
+;  Global record  for www.xxx.us
+dev.*.*.	IN	A 	111.69.215.66
+		NS	dns
+		NS	dns2
+		NS	dns3
+		MX	1 dev
+		TXT 	"v=spf1 +mx -all"
+		TXT 	"LGT/dARyfCqiakdQE+UM46WnYIFPEOuXuw/VcctR5bM="
+
+;  Global record  for www.xxx.us
+dns2.*.*.	IN	A 	111.69.215.66
+		NS	dns
+		NS	dns2
+		MX	1 dev
+		TXT 	"v=spf1 +mx -all"
+		TXT 	"LGT/dARyfCqiakdQE+UM46WnYIFPEOuXuw/VcctR5bM="
+		

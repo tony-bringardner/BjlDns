@@ -1,0 +1,61 @@
+@	IN	SOA	ns1.foo.com. postmaster.foo.com. (
+			2007011001      ; serial
+                        3600    ; refresh (1 hour)
+                        1800    ; retry (30 mins)
+                        1209600  ; expire (14 days)
+                        3600 )  ; minimum (1 hour)
+
+		NS	ns1
+		NS	ns2
+		MX	1 mail
+		TXT 	"v=spf1 +mx -all"
+		TXT 	"LGT/dARyfCqiakdQE+UM46WnYIFPEOuXuw/VcctR5bM="
+		
+_dmarc 	IN	TXT	"v=DMARC1;p=quarantine;sp=quarantine;pct=100;rua=mailto:postmaster@mail.*.*;"
+www	IN	CNAME	www.foo.com.s3-website-us-west-2.amazonaws.com.
+ns1	IN	A 	222.95.39
+ns2	IN	A 	222.215.66
+ns3	IN	A 	221.140.160
+dns	IN	A 	222.95.39
+dns2	IN	A 	222.215.66
+dns3	IN	A 	221.140.160
+mail	IN	A 	222.95.39
+
+
+;  Global record  for xxx.com
+*.*.	IN	A 	222.95.39
+		NS	dns
+		NS	dns2
+		NS	dns3
+		MX	1 mail
+		TXT 	"v=spf1 +mx -all"
+		TXT 	"LGT/dARyfCqiakdQE+UM46WnYIFPEOuXuw/VcctR5bM="
+		
+
+;  Global record  for www.xxx.com
+*.*.*.	IN	A 	222.95.39
+		NS	dns
+		NS	dns2
+		NS	dns3
+		MX	1 mail
+		TXT 	"v=spf1 +mx -all"
+		TXT 	"LGT/dARyfCqiakdQE+UM46WnYIFPEOuXuw/VcctR5bM="
+		
+
+;  Global record  for www.xxx.com
+dev.*.*.	IN	A 	222.215.66
+		NS	dns
+		NS	dns2
+		NS	dns3
+		MX	1 dev
+		TXT 	"v=spf1 +mx -all"
+		TXT 	"LGT/dARyfCqiakdQE+UM46WnYIFPEOuXuw/VcctR5bM="
+
+;  Global record  for www.xxx.com
+dns2.*.*.	IN	A 	222.215.66
+		NS	dns
+		NS	dns2
+		MX	1 dev
+		TXT 	"v=spf1 +mx -all"
+		TXT 	"LGT/dARyfCqiakdQE+UM46WnYIFPEOuXuw/VcctR5bM="
+		

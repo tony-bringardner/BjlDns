@@ -1,0 +1,4 @@
+# Dynamic entries saved at Sat Oct 12 12:47:44 EST 2024
+dev.foo.com=201.168.0.4
+dev.bar.com=203.245.203.118
+

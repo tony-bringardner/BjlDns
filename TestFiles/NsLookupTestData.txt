@@ -1,0 +1,672 @@
+
+> irs.gov
+Answer for irs.gov null
+Authoritative answer:
+Answer count = 2
+irs.gov A IN ttl=7200 rdlen=4  Address: 152.216.7.110
+irs.gov A IN ttl=7200 rdlen=4  Address: 152.216.11.110
+Auth count = 0
+Additional count = 0
+
+> quit
+NsLookup done
+
+> irs.gov goole.com
+Answer for irs.gov null
+Authoritative answer:
+Answer count = 2
+irs.gov A IN ttl=7200 rdlen=4  Address: 152.216.11.110
+irs.gov A IN ttl=7200 rdlen=4  Address: 152.216.7.110
+Auth count = 0
+Additional count = 0
+Answer for goole.com null
+Authoritative answer:
+Answer count = 1
+goole.com A IN ttl=3600 rdlen=4  Address: 217.160.0.201
+Auth count = 0
+Additional count = 0
+
+> quit
+NsLookup done
+
+
+> help
+Commands:       (identifiers are shown in uppercase, [] means optional)
+NAME            - print info about the host/domain NAME using default server
+NAME1 NAME2     - as above, but use NAME2 as server
+help or ?       - print info on common commands; see nslookup(1) for details
+set OPTION      - set an option
+    all         - print options, current server and host
+    debug=(y|n)   - print debugging information
+    recurse (y|n) - ask for recursive answer to query
+    udp     (y|n) - always use a UDP or virtual circuit
+    domain=NAME - set default domain name to NAME
+    retry=X     - set number of retries to X
+    timeout=X   - set initial time-out interval to X seconds
+    querytype=X - set query type, e.g., A,ANY,CNAME,HINFO,MX,PX,NS,PTR,SOA,TXT,WKS,SRV,NAPTR
+    port=X      - set port number to send query on
+    type=X      - synonym for querytype
+    class=X     - set query class to one of IN (Internet), CHAOS, HESIOD or ANY
+server NAME     - set default server to NAME, using current default server
+exit            - exit the program, ^C also exits
+
+
+> quit
+NsLookup done
+
+
+> set all
+debug=false	defname=false
+recuse=true	udp=true
+domain=	retry=4
+querytype=A	class=IN
+server=a.root-servers.net	port=53
+
+> quit
+NsLookup done
+
+
+
+> set debug=y
+
+> irs.gov
+11-14-2024 20:33:32.940 [main] DEBUG us.bringardner.net.dns.Message - 
+Receive Buffer Debug info:
+11-14-2024 20:33:32.950 [main] DEBUG us.bringardner.net.dns.Message - Data length=2048
+ByteBuffer Dump rpos=0 wpos = 0 length=2048
+cnt=267
+buf[000] =  000 , 00 , 00000000 , raw(0) ,  
+buf[001] =  000 , 00 , 00000000 , raw(0) ,  
+buf[002] =  129 , 81 , 10000001 , raw(-127) ,  
+buf[003] =  000 , 00 , 00000000 , raw(0) ,  
+buf[004] =  000 , 00 , 00000000 , raw(0) ,  
+buf[005] =  001 , 01 , 00000001 , raw(1) ,  
+buf[006] =  000 , 00 , 00000000 , raw(0) ,  
+buf[007] =  000 , 00 , 00000000 , raw(0) ,  
+buf[008] =  000 , 00 , 00000000 , raw(0) ,  
+buf[009] =  004 , 04 , 00000100 , raw(4) ,  
+buf[010] =  000 , 00 , 00000000 , raw(0) ,  
+buf[011] =  008 , 08 , 00001000 , raw(8) ,  
+buf[012] =  003 , 03 , 00000011 , raw(3) ,  
+buf[013] =  105 , 69 , 01101001 , raw(105) , i
+buf[014] =  114 , 72 , 01110010 , raw(114) , r
+buf[015] =  115 , 73 , 01110011 , raw(115) , s
+buf[016] =  003 , 03 , 00000011 , raw(3) ,  
+buf[017] =  103 , 67 , 01100111 , raw(103) , g
+buf[018] =  111 , 6f , 01101111 , raw(111) , o
+buf[019] =  118 , 76 , 01110110 , raw(118) , v
+buf[020] =  000 , 00 , 00000000 , raw(0) ,  
+buf[021] =  000 , 00 , 00000000 , raw(0) ,  
+buf[022] =  001 , 01 , 00000001 , raw(1) ,  
+buf[023] =  000 , 00 , 00000000 , raw(0) ,  
+buf[024] =  001 , 01 , 00000001 , raw(1) ,  
+buf[025] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[026] =  016 , 10 , 00010000 , raw(16) ,  
+buf[027] =  000 , 00 , 00000000 , raw(0) ,  
+buf[028] =  002 , 02 , 00000010 , raw(2) ,  
+buf[029] =  000 , 00 , 00000000 , raw(0) ,  
+buf[030] =  001 , 01 , 00000001 , raw(1) ,  
+buf[031] =  000 , 00 , 00000000 , raw(0) ,  
+buf[032] =  002 , 02 , 00000010 , raw(2) ,  
+buf[033] =  163 , a3 , 10100011 , raw(-93) ,  
+buf[034] =  000 , 00 , 00000000 , raw(0) ,  
+buf[035] =  000 , 00 , 00000000 , raw(0) ,  
+buf[036] =  007 , 07 , 00000111 , raw(7) ,  
+buf[037] =  001 , 01 , 00000001 , raw(1) ,  
+buf[038] =  099 , 63 , 01100011 , raw(99) , c
+buf[039] =  002 , 02 , 00000010 , raw(2) ,  
+buf[040] =  110 , 6e , 01101110 , raw(110) , n
+buf[041] =  115 , 73 , 01110011 , raw(115) , s
+buf[042] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[043] =  016 , 10 , 00010000 , raw(16) ,  
+buf[044] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[045] =  016 , 10 , 00010000 , raw(16) ,  
+buf[046] =  000 , 00 , 00000000 , raw(0) ,  
+buf[047] =  002 , 02 , 00000010 , raw(2) ,  
+buf[048] =  000 , 00 , 00000000 , raw(0) ,  
+buf[049] =  001 , 01 , 00000001 , raw(1) ,  
+buf[050] =  000 , 00 , 00000000 , raw(0) ,  
+buf[051] =  002 , 02 , 00000010 , raw(2) ,  
+buf[052] =  163 , a3 , 10100011 , raw(-93) ,  
+buf[053] =  000 , 00 , 00000000 , raw(0) ,  
+buf[054] =  000 , 00 , 00000000 , raw(0) ,  
+buf[055] =  004 , 04 , 00000100 , raw(4) ,  
+buf[056] =  001 , 01 , 00000001 , raw(1) ,  
+buf[057] =  097 , 61 , 01100001 , raw(97) , a
+buf[058] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[059] =  039 , 27 , 00100111 , raw(39) , '
+buf[060] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[061] =  016 , 10 , 00010000 , raw(16) ,  
+buf[062] =  000 , 00 , 00000000 , raw(0) ,  
+buf[063] =  002 , 02 , 00000010 , raw(2) ,  
+buf[064] =  000 , 00 , 00000000 , raw(0) ,  
+buf[065] =  001 , 01 , 00000001 , raw(1) ,  
+buf[066] =  000 , 00 , 00000000 , raw(0) ,  
+buf[067] =  002 , 02 , 00000010 , raw(2) ,  
+buf[068] =  163 , a3 , 10100011 , raw(-93) ,  
+buf[069] =  000 , 00 , 00000000 , raw(0) ,  
+buf[070] =  000 , 00 , 00000000 , raw(0) ,  
+buf[071] =  004 , 04 , 00000100 , raw(4) ,  
+buf[072] =  001 , 01 , 00000001 , raw(1) ,  
+buf[073] =  100 , 64 , 01100100 , raw(100) , d
+buf[074] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[075] =  039 , 27 , 00100111 , raw(39) , '
+buf[076] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[077] =  016 , 10 , 00010000 , raw(16) ,  
+buf[078] =  000 , 00 , 00000000 , raw(0) ,  
+buf[079] =  002 , 02 , 00000010 , raw(2) ,  
+buf[080] =  000 , 00 , 00000000 , raw(0) ,  
+buf[081] =  001 , 01 , 00000001 , raw(1) ,  
+buf[082] =  000 , 00 , 00000000 , raw(0) ,  
+buf[083] =  002 , 02 , 00000010 , raw(2) ,  
+buf[084] =  163 , a3 , 10100011 , raw(-93) ,  
+buf[085] =  000 , 00 , 00000000 , raw(0) ,  
+buf[086] =  000 , 00 , 00000000 , raw(0) ,  
+buf[087] =  004 , 04 , 00000100 , raw(4) ,  
+buf[088] =  001 , 01 , 00000001 , raw(1) ,  
+buf[089] =  098 , 62 , 01100010 , raw(98) , b
+buf[090] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[091] =  039 , 27 , 00100111 , raw(39) , '
+buf[092] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[093] =  037 , 25 , 00100101 , raw(37) , %
+buf[094] =  000 , 00 , 00000000 , raw(0) ,  
+buf[095] =  001 , 01 , 00000001 , raw(1) ,  
+buf[096] =  000 , 00 , 00000000 , raw(0) ,  
+buf[097] =  001 , 01 , 00000001 , raw(1) ,  
+buf[098] =  000 , 00 , 00000000 , raw(0) ,  
+buf[099] =  002 , 02 , 00000010 , raw(2) ,  
+buf[100] =  163 , a3 , 10100011 , raw(-93) ,  
+buf[101] =  000 , 00 , 00000000 , raw(0) ,  
+buf[102] =  000 , 00 , 00000000 , raw(0) ,  
+buf[103] =  004 , 04 , 00000100 , raw(4) ,  
+buf[104] =  199 , c7 , 11000111 , raw(-57) ,  
+buf[105] =  033 , 21 , 00100001 , raw(33) , !
+buf[106] =  232 , e8 , 11101000 , raw(-24) ,  
+buf[107] =  001 , 01 , 00000001 , raw(1) ,  
+buf[108] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[109] =  037 , 25 , 00100101 , raw(37) , %
+buf[110] =  000 , 00 , 00000000 , raw(0) ,  
+buf[111] =  028 , 1c , 00011100 , raw(28) ,  
+buf[112] =  000 , 00 , 00000000 , raw(0) ,  
+buf[113] =  001 , 01 , 00000001 , raw(1) ,  
+buf[114] =  000 , 00 , 00000000 , raw(0) ,  
+buf[115] =  002 , 02 , 00000010 , raw(2) ,  
+buf[116] =  163 , a3 , 10100011 , raw(-93) ,  
+buf[117] =  000 , 00 , 00000000 , raw(0) ,  
+buf[118] =  000 , 00 , 00000000 , raw(0) ,  
+buf[119] =  016 , 10 , 00010000 , raw(16) ,  
+buf[120] =  032 , 20 , 00100000 , raw(32) ,  
+buf[121] =  001 , 01 , 00000001 , raw(1) ,  
+buf[122] =  005 , 05 , 00000101 , raw(5) ,  
+buf[123] =  003 , 03 , 00000011 , raw(3) ,  
+buf[124] =  255 , ff , 11111111 , raw(-1) ,  
+buf[125] =  066 , 42 , 01000010 , raw(66) , B
+buf[126] =  000 , 00 , 00000000 , raw(0) ,  
+buf[127] =  000 , 00 , 00000000 , raw(0) ,  
+buf[128] =  000 , 00 , 00000000 , raw(0) ,  
+buf[129] =  000 , 00 , 00000000 , raw(0) ,  
+buf[130] =  000 , 00 , 00000000 , raw(0) ,  
+buf[131] =  000 , 00 , 00000000 , raw(0) ,  
+buf[132] =  000 , 00 , 00000000 , raw(0) ,  
+buf[133] =  000 , 00 , 00000000 , raw(0) ,  
+buf[134] =  000 , 00 , 00000000 , raw(0) ,  
+buf[135] =  001 , 01 , 00000001 , raw(1) ,  
+buf[136] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[137] =  056 , 38 , 00111000 , raw(56) , 8
+buf[138] =  000 , 00 , 00000000 , raw(0) ,  
+buf[139] =  001 , 01 , 00000001 , raw(1) ,  
+buf[140] =  000 , 00 , 00000000 , raw(0) ,  
+buf[141] =  001 , 01 , 00000001 , raw(1) ,  
+buf[142] =  000 , 00 , 00000000 , raw(0) ,  
+buf[143] =  002 , 02 , 00000010 , raw(2) ,  
+buf[144] =  163 , a3 , 10100011 , raw(-93) ,  
+buf[145] =  000 , 00 , 00000000 , raw(0) ,  
+buf[146] =  000 , 00 , 00000000 , raw(0) ,  
+buf[147] =  004 , 04 , 00000100 , raw(4) ,  
+buf[148] =  199 , c7 , 11000111 , raw(-57) ,  
+buf[149] =  033 , 21 , 00100001 , raw(33) , !
+buf[150] =  230 , e6 , 11100110 , raw(-26) ,  
+buf[151] =  001 , 01 , 00000001 , raw(1) ,  
+buf[152] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[153] =  056 , 38 , 00111000 , raw(56) , 8
+buf[154] =  000 , 00 , 00000000 , raw(0) ,  
+buf[155] =  028 , 1c , 00011100 , raw(28) ,  
+buf[156] =  000 , 00 , 00000000 , raw(0) ,  
+buf[157] =  001 , 01 , 00000001 , raw(1) ,  
+buf[158] =  000 , 00 , 00000000 , raw(0) ,  
+buf[159] =  002 , 02 , 00000010 , raw(2) ,  
+buf[160] =  163 , a3 , 10100011 , raw(-93) ,  
+buf[161] =  000 , 00 , 00000000 , raw(0) ,  
+buf[162] =  000 , 00 , 00000000 , raw(0) ,  
+buf[163] =  016 , 10 , 00010000 , raw(16) ,  
+buf[164] =  032 , 20 , 00100000 , raw(32) ,  
+buf[165] =  001 , 01 , 00000001 , raw(1) ,  
+buf[166] =  005 , 05 , 00000101 , raw(5) ,  
+buf[167] =  003 , 03 , 00000011 , raw(3) ,  
+buf[168] =  255 , ff , 11111111 , raw(-1) ,  
+buf[169] =  064 , 40 , 01000000 , raw(64) , @
+buf[170] =  000 , 00 , 00000000 , raw(0) ,  
+buf[171] =  000 , 00 , 00000000 , raw(0) ,  
+buf[172] =  000 , 00 , 00000000 , raw(0) ,  
+buf[173] =  000 , 00 , 00000000 , raw(0) ,  
+buf[174] =  000 , 00 , 00000000 , raw(0) ,  
+buf[175] =  000 , 00 , 00000000 , raw(0) ,  
+buf[176] =  000 , 00 , 00000000 , raw(0) ,  
+buf[177] =  000 , 00 , 00000000 , raw(0) ,  
+buf[178] =  000 , 00 , 00000000 , raw(0) ,  
+buf[179] =  001 , 01 , 00000001 , raw(1) ,  
+buf[180] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[181] =  072 , 48 , 01001000 , raw(72) , H
+buf[182] =  000 , 00 , 00000000 , raw(0) ,  
+buf[183] =  001 , 01 , 00000001 , raw(1) ,  
+buf[184] =  000 , 00 , 00000000 , raw(0) ,  
+buf[185] =  001 , 01 , 00000001 , raw(1) ,  
+buf[186] =  000 , 00 , 00000000 , raw(0) ,  
+buf[187] =  002 , 02 , 00000010 , raw(2) ,  
+buf[188] =  163 , a3 , 10100011 , raw(-93) ,  
+buf[189] =  000 , 00 , 00000000 , raw(0) ,  
+buf[190] =  000 , 00 , 00000000 , raw(0) ,  
+buf[191] =  004 , 04 , 00000100 , raw(4) ,  
+buf[192] =  199 , c7 , 11000111 , raw(-57) ,  
+buf[193] =  033 , 21 , 00100001 , raw(33) , !
+buf[194] =  233 , e9 , 11101001 , raw(-23) ,  
+buf[195] =  001 , 01 , 00000001 , raw(1) ,  
+buf[196] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[197] =  072 , 48 , 01001000 , raw(72) , H
+buf[198] =  000 , 00 , 00000000 , raw(0) ,  
+buf[199] =  028 , 1c , 00011100 , raw(28) ,  
+buf[200] =  000 , 00 , 00000000 , raw(0) ,  
+buf[201] =  001 , 01 , 00000001 , raw(1) ,  
+buf[202] =  000 , 00 , 00000000 , raw(0) ,  
+buf[203] =  002 , 02 , 00000010 , raw(2) ,  
+buf[204] =  163 , a3 , 10100011 , raw(-93) ,  
+buf[205] =  000 , 00 , 00000000 , raw(0) ,  
+buf[206] =  000 , 00 , 00000000 , raw(0) ,  
+buf[207] =  016 , 10 , 00010000 , raw(16) ,  
+buf[208] =  032 , 20 , 00100000 , raw(32) ,  
+buf[209] =  001 , 01 , 00000001 , raw(1) ,  
+buf[210] =  005 , 05 , 00000101 , raw(5) ,  
+buf[211] =  003 , 03 , 00000011 , raw(3) ,  
+buf[212] =  255 , ff , 11111111 , raw(-1) ,  
+buf[213] =  067 , 43 , 01000011 , raw(67) , C
+buf[214] =  000 , 00 , 00000000 , raw(0) ,  
+buf[215] =  000 , 00 , 00000000 , raw(0) ,  
+buf[216] =  000 , 00 , 00000000 , raw(0) ,  
+buf[217] =  000 , 00 , 00000000 , raw(0) ,  
+buf[218] =  000 , 00 , 00000000 , raw(0) ,  
+buf[219] =  000 , 00 , 00000000 , raw(0) ,  
+buf[220] =  000 , 00 , 00000000 , raw(0) ,  
+buf[221] =  000 , 00 , 00000000 , raw(0) ,  
+buf[222] =  000 , 00 , 00000000 , raw(0) ,  
+buf[223] =  001 , 01 , 00000001 , raw(1) ,  
+buf[224] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[225] =  088 , 58 , 01011000 , raw(88) , X
+buf[226] =  000 , 00 , 00000000 , raw(0) ,  
+buf[227] =  001 , 01 , 00000001 , raw(1) ,  
+buf[228] =  000 , 00 , 00000000 , raw(0) ,  
+buf[229] =  001 , 01 , 00000001 , raw(1) ,  
+buf[230] =  000 , 00 , 00000000 , raw(0) ,  
+buf[231] =  002 , 02 , 00000010 , raw(2) ,  
+buf[232] =  163 , a3 , 10100011 , raw(-93) ,  
+buf[233] =  000 , 00 , 00000000 , raw(0) ,  
+buf[234] =  000 , 00 , 00000000 , raw(0) ,  
+buf[235] =  004 , 04 , 00000100 , raw(4) ,  
+buf[236] =  199 , c7 , 11000111 , raw(-57) ,  
+buf[237] =  033 , 21 , 00100001 , raw(33) , !
+buf[238] =  231 , e7 , 11100111 , raw(-25) ,  
+buf[239] =  001 , 01 , 00000001 , raw(1) ,  
+buf[240] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[241] =  088 , 58 , 01011000 , raw(88) , X
+buf[242] =  000 , 00 , 00000000 , raw(0) ,  
+buf[243] =  028 , 1c , 00011100 , raw(28) ,  
+buf[244] =  000 , 00 , 00000000 , raw(0) ,  
+buf[245] =  001 , 01 , 00000001 , raw(1) ,  
+buf[246] =  000 , 00 , 00000000 , raw(0) ,  
+buf[247] =  002 , 02 , 00000010 , raw(2) ,  
+buf[248] =  163 , a3 , 10100011 , raw(-93) ,  
+buf[249] =  000 , 00 , 00000000 , raw(0) ,  
+buf[250] =  000 , 00 , 00000000 , raw(0) ,  
+buf[251] =  016 , 10 , 00010000 , raw(16) ,  
+buf[252] =  032 , 20 , 00100000 , raw(32) ,  
+buf[253] =  001 , 01 , 00000001 , raw(1) ,  
+buf[254] =  005 , 05 , 00000101 , raw(5) ,  
+buf[255] =  003 , 03 , 00000011 , raw(3) ,  
+buf[256] =  255 , ff , 11111111 , raw(-1) ,  
+buf[257] =  065 , 41 , 01000001 , raw(65) , A
+buf[258] =  000 , 00 , 00000000 , raw(0) ,  
+buf[259] =  000 , 00 , 00000000 , raw(0) ,  
+buf[260] =  000 , 00 , 00000000 , raw(0) ,  
+buf[261] =  000 , 00 , 00000000 , raw(0) ,  
+buf[262] =  000 , 00 , 00000000 , raw(0) ,  
+buf[263] =  000 , 00 , 00000000 , raw(0) ,  
+buf[264] =  000 , 00 , 00000000 , raw(0) ,  
+buf[265] =  000 , 00 , 00000000 , raw(0) ,  
+buf[266] =  000 , 00 , 00000000 , raw(0) ,  
+buf[267] =  001 , 01 , 00000001 , raw(1) ,  
+buf[268] =  000 , 00 , 00000000 , raw(0) ,  
+	ID	0
+	QR	1
+	OPCODE	0000 = 0 a standard query (QUERY)
+	AA	0
+	TC	0
+	RD	1
+	RA	0
+	Z	000	Reserved for future use.  Must be zero in all queries and responses.
+	RCODE	0000 = 0 No error condition
+	QDCOUNT	1
+	ANCOUNT	0
+	NSCOUNT	4
+	ARCOUNT	8
+11-14-2024 20:33:32.982 [main] DEBUG us.bringardner.net.dns.Message - msg = Header 
+id=0
+ qr=RESPONSE 		/** 01 bit == Type of Message (QUERY or RESPONSE) **/
+ opcode=0 (QUERY)04 bit == Type of Query (QUERY, IQUERY or STATUS)
+ aa=false tc=false rd=true ra=false
+ rcode=0 (NoError)
+ qdcount=1 ancount=0 nscount=4 arcount=8
+Qtype = 1(A)
+DnsClass = 1(IN)
+Question 
+	irs.gov A IN
+Answer 
+Autority 
+	gov NS IN ttl=172800 rdlen=7  c.ns.gov
+	gov NS IN ttl=172800 rdlen=4  a.ns.gov
+	gov NS IN ttl=172800 rdlen=4  d.ns.gov
+	gov NS IN ttl=172800 rdlen=4  b.ns.gov
+Additional 
+	c.ns.gov A IN ttl=172800 rdlen=4  Address: 199.33.232.1
+	c.ns.gov AAAA IN ttl=172800 rdlen=16  Address: 2001:503:ff42::1
+	a.ns.gov A IN ttl=172800 rdlen=4  Address: 199.33.230.1
+	a.ns.gov AAAA IN ttl=172800 rdlen=16  Address: 2001:503:ff40::1
+	d.ns.gov A IN ttl=172800 rdlen=4  Address: 199.33.233.1
+	d.ns.gov AAAA IN ttl=172800 rdlen=16  Address: 2001:503:ff43::1
+	b.ns.gov A IN ttl=172800 rdlen=4  Address: 199.33.231.1
+	b.ns.gov AAAA IN ttl=172800 rdlen=16  Address: 2001:503:ff41::1
+
+11-14-2024 20:33:32.982 [main] DEBUG us.bringardner.net.dns.Message - End Receive Buffer Debug info:
+
+11-14-2024 20:33:33.004 [main] DEBUG us.bringardner.net.dns.Message - 
+Receive Buffer Debug info:
+11-14-2024 20:33:33.004 [main] DEBUG us.bringardner.net.dns.Message - Data length=2048
+ByteBuffer Dump rpos=0 wpos = 0 length=2048
+cnt=90
+buf[000] =  000 , 00 , 00000000 , raw(0) ,  
+buf[001] =  000 , 00 , 00000000 , raw(0) ,  
+buf[002] =  129 , 81 , 10000001 , raw(-127) ,  
+buf[003] =  000 , 00 , 00000000 , raw(0) ,  
+buf[004] =  000 , 00 , 00000000 , raw(0) ,  
+buf[005] =  001 , 01 , 00000001 , raw(1) ,  
+buf[006] =  000 , 00 , 00000000 , raw(0) ,  
+buf[007] =  000 , 00 , 00000000 , raw(0) ,  
+buf[008] =  000 , 00 , 00000000 , raw(0) ,  
+buf[009] =  002 , 02 , 00000010 , raw(2) ,  
+buf[010] =  000 , 00 , 00000000 , raw(0) ,  
+buf[011] =  000 , 00 , 00000000 , raw(0) ,  
+buf[012] =  003 , 03 , 00000011 , raw(3) ,  
+buf[013] =  105 , 69 , 01101001 , raw(105) , i
+buf[014] =  114 , 72 , 01110010 , raw(114) , r
+buf[015] =  115 , 73 , 01110011 , raw(115) , s
+buf[016] =  003 , 03 , 00000011 , raw(3) ,  
+buf[017] =  103 , 67 , 01100111 , raw(103) , g
+buf[018] =  111 , 6f , 01101111 , raw(111) , o
+buf[019] =  118 , 76 , 01110110 , raw(118) , v
+buf[020] =  000 , 00 , 00000000 , raw(0) ,  
+buf[021] =  000 , 00 , 00000000 , raw(0) ,  
+buf[022] =  001 , 01 , 00000001 , raw(1) ,  
+buf[023] =  000 , 00 , 00000000 , raw(0) ,  
+buf[024] =  001 , 01 , 00000001 , raw(1) ,  
+buf[025] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[026] =  012 , 0c , 00001100 , raw(12) ,  
+buf[027] =  000 , 00 , 00000000 , raw(0) ,  
+buf[028] =  002 , 02 , 00000010 , raw(2) ,  
+buf[029] =  000 , 00 , 00000000 , raw(0) ,  
+buf[030] =  001 , 01 , 00000001 , raw(1) ,  
+buf[031] =  000 , 00 , 00000000 , raw(0) ,  
+buf[032] =  000 , 00 , 00000000 , raw(0) ,  
+buf[033] =  042 , 2a , 00101010 , raw(42) , *
+buf[034] =  048 , 30 , 00110000 , raw(48) , 0
+buf[035] =  000 , 00 , 00000000 , raw(0) ,  
+buf[036] =  033 , 21 , 00100001 , raw(33) , !
+buf[037] =  006 , 06 , 00000110 , raw(6) ,  
+buf[038] =  110 , 6e , 01101110 , raw(110) , n
+buf[039] =  115 , 73 , 01110011 , raw(115) , s
+buf[040] =  048 , 30 , 00110000 , raw(48) , 0
+buf[041] =  048 , 30 , 00110000 , raw(48) , 0
+buf[042] =  050 , 32 , 00110010 , raw(50) , 2
+buf[043] =  050 , 32 , 00110010 , raw(50) , 2
+buf[044] =  009 , 09 , 00001001 , raw(9) ,  
+buf[045] =  115 , 73 , 01110011 , raw(115) , s
+buf[046] =  101 , 65 , 01100101 , raw(101) , e
+buf[047] =  099 , 63 , 01100011 , raw(99) , c
+buf[048] =  111 , 6f , 01101111 , raw(111) , o
+buf[049] =  110 , 6e , 01101110 , raw(110) , n
+buf[050] =  100 , 64 , 01100100 , raw(100) , d
+buf[051] =  097 , 61 , 01100001 , raw(97) , a
+buf[052] =  114 , 72 , 01110010 , raw(114) , r
+buf[053] =  121 , 79 , 01111001 , raw(121) , y
+buf[054] =  010 , 0a , 00001010 , raw(10) ,  
+buf[055] =  099 , 63 , 01100011 , raw(99) , c
+buf[056] =  108 , 6c , 01101100 , raw(108) , l
+buf[057] =  111 , 6f , 01101111 , raw(111) , o
+buf[058] =  117 , 75 , 01110101 , raw(117) , u
+buf[059] =  100 , 64 , 01100100 , raw(100) , d
+buf[060] =  102 , 66 , 01100110 , raw(102) , f
+buf[061] =  108 , 6c , 01101100 , raw(108) , l
+buf[062] =  097 , 61 , 01100001 , raw(97) , a
+buf[063] =  114 , 72 , 01110010 , raw(114) , r
+buf[064] =  101 , 65 , 01100101 , raw(101) , e
+buf[065] =  003 , 03 , 00000011 , raw(3) ,  
+buf[066] =  099 , 63 , 01100011 , raw(99) , c
+buf[067] =  111 , 6f , 01101111 , raw(111) , o
+buf[068] =  109 , 6d , 01101101 , raw(109) , m
+buf[069] =  000 , 00 , 00000000 , raw(0) ,  
+buf[070] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[071] =  012 , 0c , 00001100 , raw(12) ,  
+buf[072] =  000 , 00 , 00000000 , raw(0) ,  
+buf[073] =  002 , 02 , 00000010 , raw(2) ,  
+buf[074] =  000 , 00 , 00000000 , raw(0) ,  
+buf[075] =  001 , 01 , 00000001 , raw(1) ,  
+buf[076] =  000 , 00 , 00000000 , raw(0) ,  
+buf[077] =  000 , 00 , 00000000 , raw(0) ,  
+buf[078] =  042 , 2a , 00101010 , raw(42) , *
+buf[079] =  048 , 30 , 00110000 , raw(48) , 0
+buf[080] =  000 , 00 , 00000000 , raw(0) ,  
+buf[081] =  009 , 09 , 00001001 , raw(9) ,  
+buf[082] =  006 , 06 , 00000110 , raw(6) ,  
+buf[083] =  110 , 6e , 01101110 , raw(110) , n
+buf[084] =  115 , 73 , 01110011 , raw(115) , s
+buf[085] =  048 , 30 , 00110000 , raw(48) , 0
+buf[086] =  050 , 32 , 00110010 , raw(50) , 2
+buf[087] =  050 , 32 , 00110010 , raw(50) , 2
+buf[088] =  055 , 37 , 00110111 , raw(55) , 7
+buf[089] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[090] =  044 , 2c , 00101100 , raw(44) , ,
+buf[091] =  000 , 00 , 00000000 , raw(0) ,  
+	ID	0
+	QR	1
+	OPCODE	0000 = 0 a standard query (QUERY)
+	AA	0
+	TC	0
+	RD	1
+	RA	0
+	Z	000	Reserved for future use.  Must be zero in all queries and responses.
+	RCODE	0000 = 0 No error condition
+	QDCOUNT	1
+	ANCOUNT	0
+	NSCOUNT	2
+	ARCOUNT	0
+11-14-2024 20:33:33.007 [main] DEBUG us.bringardner.net.dns.Message - msg = Header 
+id=0
+ qr=RESPONSE 		/** 01 bit == Type of Message (QUERY or RESPONSE) **/
+ opcode=0 (QUERY)04 bit == Type of Query (QUERY, IQUERY or STATUS)
+ aa=false tc=false rd=true ra=false
+ rcode=0 (NoError)
+ qdcount=1 ancount=0 nscount=2 arcount=0
+Qtype = 1(A)
+DnsClass = 1(IN)
+Question 
+	irs.gov A IN
+Answer 
+Autority 
+	irs.gov NS IN ttl=10800 rdlen=33  ns0022.secondary.cloudflare.com
+	irs.gov NS IN ttl=10800 rdlen=9  ns0227.secondary.cloudflare.com
+Additional 
+
+11-14-2024 20:33:33.007 [main] DEBUG us.bringardner.net.dns.Message - End Receive Buffer Debug info:
+
+11-14-2024 20:33:33.113 [main] DEBUG us.bringardner.net.dns.Message - 
+Receive Buffer Debug info:
+11-14-2024 20:33:33.113 [main] DEBUG us.bringardner.net.dns.Message - Data length=2048
+ByteBuffer Dump rpos=0 wpos = 0 length=2048
+cnt=56
+buf[000] =  000 , 00 , 00000000 , raw(0) ,  
+buf[001] =  000 , 00 , 00000000 , raw(0) ,  
+buf[002] =  133 , 85 , 10000101 , raw(-123) ,  
+buf[003] =  000 , 00 , 00000000 , raw(0) ,  
+buf[004] =  000 , 00 , 00000000 , raw(0) ,  
+buf[005] =  001 , 01 , 00000001 , raw(1) ,  
+buf[006] =  000 , 00 , 00000000 , raw(0) ,  
+buf[007] =  002 , 02 , 00000010 , raw(2) ,  
+buf[008] =  000 , 00 , 00000000 , raw(0) ,  
+buf[009] =  000 , 00 , 00000000 , raw(0) ,  
+buf[010] =  000 , 00 , 00000000 , raw(0) ,  
+buf[011] =  000 , 00 , 00000000 , raw(0) ,  
+buf[012] =  003 , 03 , 00000011 , raw(3) ,  
+buf[013] =  105 , 69 , 01101001 , raw(105) , i
+buf[014] =  114 , 72 , 01110010 , raw(114) , r
+buf[015] =  115 , 73 , 01110011 , raw(115) , s
+buf[016] =  003 , 03 , 00000011 , raw(3) ,  
+buf[017] =  103 , 67 , 01100111 , raw(103) , g
+buf[018] =  111 , 6f , 01101111 , raw(111) , o
+buf[019] =  118 , 76 , 01110110 , raw(118) , v
+buf[020] =  000 , 00 , 00000000 , raw(0) ,  
+buf[021] =  000 , 00 , 00000000 , raw(0) ,  
+buf[022] =  001 , 01 , 00000001 , raw(1) ,  
+buf[023] =  000 , 00 , 00000000 , raw(0) ,  
+buf[024] =  001 , 01 , 00000001 , raw(1) ,  
+buf[025] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[026] =  012 , 0c , 00001100 , raw(12) ,  
+buf[027] =  000 , 00 , 00000000 , raw(0) ,  
+buf[028] =  001 , 01 , 00000001 , raw(1) ,  
+buf[029] =  000 , 00 , 00000000 , raw(0) ,  
+buf[030] =  001 , 01 , 00000001 , raw(1) ,  
+buf[031] =  000 , 00 , 00000000 , raw(0) ,  
+buf[032] =  000 , 00 , 00000000 , raw(0) ,  
+buf[033] =  028 , 1c , 00011100 , raw(28) ,  
+buf[034] =  032 , 20 , 00100000 , raw(32) ,  
+buf[035] =  000 , 00 , 00000000 , raw(0) ,  
+buf[036] =  004 , 04 , 00000100 , raw(4) ,  
+buf[037] =  152 , 98 , 10011000 , raw(-104) ,  
+buf[038] =  216 , d8 , 11011000 , raw(-40) ,  
+buf[039] =  007 , 07 , 00000111 , raw(7) ,  
+buf[040] =  110 , 6e , 01101110 , raw(110) , n
+buf[041] =  192 , c0 , 11000000 , raw(-64) ,  
+buf[042] =  012 , 0c , 00001100 , raw(12) ,  
+buf[043] =  000 , 00 , 00000000 , raw(0) ,  
+buf[044] =  001 , 01 , 00000001 , raw(1) ,  
+buf[045] =  000 , 00 , 00000000 , raw(0) ,  
+buf[046] =  001 , 01 , 00000001 , raw(1) ,  
+buf[047] =  000 , 00 , 00000000 , raw(0) ,  
+buf[048] =  000 , 00 , 00000000 , raw(0) ,  
+buf[049] =  028 , 1c , 00011100 , raw(28) ,  
+buf[050] =  032 , 20 , 00100000 , raw(32) ,  
+buf[051] =  000 , 00 , 00000000 , raw(0) ,  
+buf[052] =  004 , 04 , 00000100 , raw(4) ,  
+buf[053] =  152 , 98 , 10011000 , raw(-104) ,  
+buf[054] =  216 , d8 , 11011000 , raw(-40) ,  
+buf[055] =  011 , 0b , 00001011 , raw(11) ,  
+buf[056] =  110 , 6e , 01101110 , raw(110) , n
+buf[057] =  000 , 00 , 00000000 , raw(0) ,  
+	ID	0
+	QR	1
+	OPCODE	0000 = 0 a standard query (QUERY)
+	AA	1
+	TC	0
+	RD	1
+	RA	0
+	Z	000	Reserved for future use.  Must be zero in all queries and responses.
+	RCODE	0000 = 0 No error condition
+	QDCOUNT	1
+	ANCOUNT	2
+	NSCOUNT	0
+	ARCOUNT	0
+11-14-2024 20:33:33.115 [main] DEBUG us.bringardner.net.dns.Message - msg = Header 
+id=0
+ qr=RESPONSE 		/** 01 bit == Type of Message (QUERY or RESPONSE) **/
+ opcode=0 (QUERY)04 bit == Type of Query (QUERY, IQUERY or STATUS)
+ aa=true tc=false rd=true ra=false
+ rcode=0 (NoError)
+ qdcount=1 ancount=2 nscount=0 arcount=0
+Qtype = 1(A)
+DnsClass = 1(IN)
+Question 
+	irs.gov A IN
+Answer 
+	irs.gov A IN ttl=7200 rdlen=4  Address: 152.216.7.110
+	irs.gov A IN ttl=7200 rdlen=4  Address: 152.216.11.110
+Autority 
+Additional 
+
+11-14-2024 20:33:33.116 [main] DEBUG us.bringardner.net.dns.Message - End Receive Buffer Debug info:
+
+Answer for irs.gov null
+Authoritative answer:
+Answer count = 2
+irs.gov A IN ttl=7200 rdlen=4  Address: 152.216.7.110
+irs.gov A IN ttl=7200 rdlen=4  Address: 152.216.11.110
+Auth count = 0
+Additional count = 0
+
+> quit
+NsLookup done
+
+
+> all
+debug=false	defname=false
+recuse=true	udp=true
+domain=	retry=4
+querytype=A	class=IN
+server=a.root-servers.net	port=53
+
+> irs.gov
+Answer for irs.gov null
+Authoritative answer:
+Answer count = 2
+irs.gov A IN ttl=7200 rdlen=4  Address: 152.216.7.110
+irs.gov A IN ttl=7200 rdlen=4  Address: 152.216.11.110
+Auth count = 0
+Additional count = 0
+
+> set recurse=n
+
+> all
+debug=false	defname=false
+recuse=false	udp=true
+domain=	retry=4
+querytype=A	class=IN
+server=a.root-servers.net	port=53
+
+> irs.gov
+Answer for irs.gov null
+Non-authoritative answer:
+Answer count = 0
+
+Authoritative answer can be found at:
+Auth count = 4
+gov NS IN ttl=172800 rdlen=7  c.ns.gov
+gov NS IN ttl=172800 rdlen=4  a.ns.gov
+gov NS IN ttl=172800 rdlen=4  d.ns.gov
+gov NS IN ttl=172800 rdlen=4  b.ns.gov
+Additional count = 8
+c.ns.gov A IN ttl=172800 rdlen=4  Address: 199.33.232.1
+c.ns.gov AAAA IN ttl=172800 rdlen=16  Address: 2001:503:ff42::1
+a.ns.gov A IN ttl=172800 rdlen=4  Address: 199.33.230.1
+a.ns.gov AAAA IN ttl=172800 rdlen=16  Address: 2001:503:ff40::1
+d.ns.gov A IN ttl=172800 rdlen=4  Address: 199.33.233.1
+d.ns.gov AAAA IN ttl=172800 rdlen=16  Address: 2001:503:ff43::1
+b.ns.gov A IN ttl=172800 rdlen=4  Address: 199.33.231.1
+b.ns.gov AAAA IN ttl=172800 rdlen=16  Address: 2001:503:ff41::1
+
+> quit
+NsLookup done

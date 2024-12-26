@@ -1,0 +1,5 @@
+
+
+CREATE TABLE  domains (
+	name VARCHAR  NOT NULL  PRIMARY KEY
+ )
