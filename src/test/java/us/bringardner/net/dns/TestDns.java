@@ -25,9 +25,8 @@
  */
 package us.bringardner.net.dns;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import java.io.File;
 import java.io.IOException;
@@ -35,9 +34,10 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
 
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 import us.bringardner.net.dns.server.DnsAdminClient;
 import us.bringardner.net.dns.server.DnsServer;
@@ -102,7 +102,7 @@ public class TestDns implements DNS {
 
 
 
-	@BeforeClass
+	@BeforeAll
 	public static void setUp() throws Exception {
 
 		System.setProperty(DnsServer.PROP_DNS_PROPERTIRS, "TestFiles/TestDns.properties");
@@ -125,7 +125,7 @@ public class TestDns implements DNS {
 		}
 
 
-		assertTrue("DNS Server did not start within timoue = "+serverTimeout ,server.isRunning());
+		Assertions.assertTrue(server.isRunning(),"DNS Server did not start within timoue = "+serverTimeout );
 		localServrPort = DNS.DNSPORT;
 		localServerAddress = "192.168.1.120";
 
@@ -141,7 +141,7 @@ public class TestDns implements DNS {
 
 	}
 
-	@AfterClass
+	@AfterAll
 	public static void tearDown() throws Exception {
 		if( server != null ) {
 			server.stop();
@@ -207,6 +207,10 @@ public class TestDns implements DNS {
 		assertEquals(domain+" type=A should be a NAME ERROR rcode="+res.getResponseCode(),3, res.getResponseCode());	
 	}
 
+
+	private void assertEquals(String string, int expect, int actual) {
+		Assertions.assertEquals(expect,actual,string);		
+	}
 
 	@Test
 	public void testAdmin() throws  Exception {
@@ -345,6 +349,11 @@ public class TestDns implements DNS {
 		}
 	}
 
+	private void assertTrue(String string, boolean connect) {
+		Assertions.assertTrue(connect, string);
+		
+	}
+
 	private void compareStatus(String expected, String actual) {
 		String [] ep = expected.split("\n");
 		String [] ap = expected.split("\n");
@@ -399,7 +408,7 @@ public class TestDns implements DNS {
 			try {
 				a.setAddress(ip);
 				String str = a.getAddressString();
-				assertEquals("Address did not convet correctly",ip, str);
+				Assertions.assertEquals(ip, str,"Address did not convet correctly");
 			} catch (Throwable e) {
 				if( valid ) {
 					throw e;
@@ -460,9 +469,9 @@ public class TestDns implements DNS {
 			assertEquals(name+" type=A should be ok rcode="+res.getResponseCode(),0, res.getResponseCode());	
 			assertEquals(name+" type=A should be have one answer="+res.getAdditionalCount(),0, res.getAdditionalCount());
 			A a = res.getAddress(name);
-			assertNotNull("Result did not have an answer ", a);
+			assertNotNull(a,"Result did not have an answer ");
 			byte [] data = a.getAddress();
-			assertNotNull("address data is null ", data);
+			assertNotNull(data,"address data is null ");
 			assertEquals(name+" data is not the correct length="+data.length,4, data.length);
 			for (int idx = 0; idx < data.length; idx++) {
 				assertEquals(name+" address at ="+idx+" is not correct",idx+1, data[idx]);
@@ -477,9 +486,9 @@ public class TestDns implements DNS {
 			assertEquals(name+" type=A should be have one answer="+res.getAdditionalCount(),0, res.getAdditionalCount());
 
 			a = res.getAddress(name);
-			assertNotNull("Result did not have an answer ", a);
+			assertNotNull(a,"Result did not have an answer ");
 			data = a.getAddress();
-			assertNotNull("address data is null ", data);
+			assertNotNull(data,"address data is null ");
 			assertEquals(name+" data is not the correct length="+data.length,4, data.length);
 			//zone file for bar.com has 111.69.95.39
 			byte expect [] = {111,69,95,39};

@@ -25,8 +25,9 @@
  */
 package us.bringardner.net.dns;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
@@ -41,9 +42,9 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 import us.bringardner.net.dns.util.NsLookup;
 
@@ -53,7 +54,7 @@ public class TestNsLookup implements DNS {
 		String promt;
 		String cmd;
 		String response;
-		
+
 		@Override
 		public boolean equals(Object obj) {
 			boolean ret = false;
@@ -63,10 +64,10 @@ public class TestNsLookup implements DNS {
 						&& response.equals(other.response)
 						;
 			}
-			
+
 			return ret;
 		}
-		
+
 		@Override
 		public String toString() {
 			return ""+cmd+"\n"+response;
@@ -81,25 +82,25 @@ public class TestNsLookup implements DNS {
 
 	Pattern ip4Pattern = Pattern.compile(ip4);
 	Pattern ip6Pattern = Pattern.compile(ip6);
-	
+
 	String dateRx = "[0-9][0-9][-][0-9][0-9][-][0-9][0-9][0-9][0-9] [0-9][0-9][:][0-9][0-9][:][0-9][0-9][.][0-9][0-9][0-9]";
 	Pattern datep = Pattern.compile(dateRx);
-	
-	
-	
 
-	@BeforeClass
+
+
+
+	@BeforeAll
 	public static void setUp() throws Exception {
 
 
 	}
 
-	@AfterClass
+	@AfterAll
 	public static void tearDown() throws Exception {
 	}
-	
+
 	private List<List<NsLookupTestData>> parseNsLookupData(String str) {
-		
+
 		List<List<NsLookupTestData>> sessions = new ArrayList<>();
 		List<NsLookupTestData> testData = new ArrayList<>();
 
@@ -139,7 +140,7 @@ public class TestNsLookup implements DNS {
 						if( m.find()) {
 							line = m.replaceAll("00-00-0000 00:00:00.000");
 						}
-						
+
 						buf.append(line);
 						buf.append("\n");
 					}
@@ -161,7 +162,7 @@ public class TestNsLookup implements DNS {
 				}
 			}
 		}
-		*/
+		 */
 
 		if(!testData.isEmpty()) {
 			sessions.add(testData);	
@@ -173,9 +174,9 @@ public class TestNsLookup implements DNS {
 
 	@Test
 	public void testNsLookup() throws Exception {
-		
+
 		File file = new File("TestFiles/NsLookupTestData.txt").getCanonicalFile();
-		assertTrue(""+file+" does not exist", file.exists());
+		assertTrue( file.exists(),""+file+" does not exist");
 		String str = null;
 		try (InputStream inp = new FileInputStream(file)) {
 			str = new String(inp.readAllBytes());
@@ -198,13 +199,13 @@ public class TestNsLookup implements DNS {
 			String response = new String(out.toByteArray());
 			//System.out.println("response="+response);
 			List<List<NsLookupTestData>> sessions2 = parseNsLookupData(response);
-			assertTrue("Replay should always have one session ="+sessions2.size(),sessions2.size()==1);
+			assertTrue(sessions2.size()==1,"Replay should always have one session ="+sessions2.size());
 			// fix the replay response because the command is not in output
 			// should be one session
-			
+
 			List<NsLookupTestData> actualSession = sessions2.get(0);
-			assertTrue("Replay session counts don;t match ="+actualSession.size(),actualSession.size() == session.size());
-			
+			assertTrue(actualSession.size() == session.size(),"Replay session counts don;t match ="+actualSession.size());
+
 			for (int idx = 0,sz=session.size(); idx < sz; idx++) {
 				NsLookupTestData actual = actualSession.get(idx);
 				NsLookupTestData expect = session.get(idx);
@@ -220,13 +221,13 @@ public class TestNsLookup implements DNS {
 								continue;
 							}
 						}
-						showCompare(expect.response,actual.response);
+						//showCompare(expect.response,actual.response);
 					}
 				}
-				assertEquals("NsLookupTestData does not match. idx="+idx, expect, actual);
-				
+				assertEquals(expect, actual,"NsLookupTestData does not match. idx="+idx);
+
 			}
-			
+
 		}
 
 	}
