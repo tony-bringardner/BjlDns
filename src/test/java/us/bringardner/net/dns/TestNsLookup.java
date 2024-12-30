@@ -85,14 +85,13 @@ public class TestNsLookup implements DNS {
 
 	String dateRx = "[0-9][0-9][-][0-9][0-9][-][0-9][0-9][0-9][0-9] [0-9][0-9][:][0-9][0-9][:][0-9][0-9][.][0-9][0-9][0-9]";
 	Pattern datep = Pattern.compile(dateRx);
-
+	// Decimal 
+	Pattern decimalPattern = Pattern.compile("[0-9]+");
 
 
 
 	@BeforeAll
 	public static void setUp() throws Exception {
-
-
 	}
 
 	@AfterAll
@@ -138,7 +137,11 @@ public class TestNsLookup implements DNS {
 						} 
 						m = datep.matcher(line);
 						if( m.find()) {
-							line = m.replaceAll("00-00-0000 00:00:00.000");
+							line = m.replaceAll("***date-time***");
+						}
+						m = decimalPattern.matcher(line);
+						while(m.find()) {							
+							line = m.replaceAll("*decimal*");
 						}
 
 						buf.append(line);
@@ -148,22 +151,7 @@ public class TestNsLookup implements DNS {
 				cd.response = buf.toString();
 			}
 		}
-		/*
-		if( cd != null && cd.cmd != null) {
-			if( testData.isEmpty()) {
-				testData.add(cd);
-			} else {
-				NsLookupTestData tmp = cd;
-				if( !testData.isEmpty()) {
-					tmp = testData.get(testData.size()-1);
-				}
-				if(!( tmp.cmd.equals(cd.cmd) && tmp.response.equals(cd.response))) {
-					testData.add(cd);
-				}
-			}
-		}
-		 */
-
+	
 		if(!testData.isEmpty()) {
 			sessions.add(testData);	
 		}
@@ -204,7 +192,7 @@ public class TestNsLookup implements DNS {
 			// should be one session
 
 			List<NsLookupTestData> actualSession = sessions2.get(0);
-			assertTrue(actualSession.size() == session.size(),"Replay session counts don;t match ="+actualSession.size());
+			assertTrue(actualSession.size() == session.size(),"Replay session counts don't match ="+actualSession.size());
 
 			for (int idx = 0,sz=session.size(); idx < sz; idx++) {
 				NsLookupTestData actual = actualSession.get(idx);
