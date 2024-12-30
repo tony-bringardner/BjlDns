@@ -106,13 +106,12 @@ public class TestDns implements DNS {
 	public static void setUp() throws Exception {
 
 		System.setProperty(DnsServer.PROP_DNS_PROPERTIRS, "TestFiles/TestDns.properties");
-		System.setProperty("LogLevel","NONE");
+		System.setProperty("LogLevel","ERROR");
 		System.setProperty("JDns.useDataBase","false");
 
 
 
 
-		//String localServerName = "192.168.0.177";
 		server = new DnsServer();
 		server.setRecursionAvailable(false);
 		// Start server as stand alone
@@ -127,7 +126,7 @@ public class TestDns implements DNS {
 
 		Assertions.assertTrue(server.isRunning(),"DNS Server did not start within timoue = "+serverTimeout );
 		localServrPort = DNS.DNSPORT;
-		localServerAddress = "192.168.1.120";
+		localServerAddress = null;
 
 		String tmp = null;
 		if(( tmp = server.getProperty(DnsServer.PROP_BIND_ADDRESS)) != null ) {
