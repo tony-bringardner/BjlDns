@@ -40,6 +40,9 @@ import javax.swing.text.SimpleAttributeSet;
 import javax.swing.text.StyleConstants;
 import javax.swing.text.StyleContext;
 
+/**
+ * This class is only here to help debug unit tests.
+ */
 public class CompareTextFrame extends JFrame {
 
 	private static final long serialVersionUID = 1L;
