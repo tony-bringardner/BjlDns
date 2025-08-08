@@ -13,7 +13,7 @@
 		</attributes>
 	</classpathentry>
 	<classpathentry excluding="resources/" kind="src" path="src/main/java"/>
-	<classpathentry kind="src" path="src/main/java/resources"/>
+	<classpathentry kind="src" path="resources"/>
 	<classpathentry kind="con" path="org.eclipse.m2e.MAVEN2_CLASSPATH_CONTAINER">
 		<attributes>
 			<attribute name="maven.pomderived" value="true"/>
