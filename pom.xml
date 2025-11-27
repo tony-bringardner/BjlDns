@@ -9,7 +9,7 @@
 		for both server and client.</description>
 	<inceptionYear>1999</inceptionYear>
 	<groupId>us.bringardner</groupId>
-	<version>0.1.0</version>
+	<version>0.1.1</version>
 	<build>
 		<!-- <sourceDirectory>src</sourceDirectory> -->
 		<pluginManagement>
@@ -95,12 +95,12 @@
 		<dependency>
 			<groupId>us.bringardner</groupId>
 			<artifactId>bjl_core</artifactId>
-			<version>0.1.0</version>
+			<version>0.1.1</version>
 		</dependency>
 		<dependency>
 			<groupId>us.bringardner</groupId>
 			<artifactId>bjl_io</artifactId>
-			<version>0.1.0</version>
+			<version>0.1.1</version>
 		</dependency>
 		<!--
 		https://mvnrepository.com/artifact/org.junit.jupiter/junit-jupiter-engine -->
