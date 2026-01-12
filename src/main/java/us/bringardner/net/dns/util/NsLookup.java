@@ -241,7 +241,7 @@ public class NsLookup extends Utility {
 		Message ret = null;
 
 		if( name.length() > 0 && Character.isDigit(name.charAt(0)) ) {
-			//If an ip address lookup is request, ask for PTR records
+			//If an ip address lookup is request, ask for PTR records recursion 
 			ret = msg.query(name,PTR,dnsClass);
 		} else {
 			if ( !domain.isEmpty()) {
@@ -251,7 +251,7 @@ public class NsLookup extends Utility {
 			ret = msg.query(name,type,dnsClass);
 			if(msg.isResponseCodeNoError() && msg.isRecursive()) {
 				if(!ret.isAuthority()) {
-					Message tmp = doRecurtion(msg,ret);
+					Message tmp = doRecursion(msg,ret);
 					if( tmp !=null && tmp.isResponseCodeNoError()) {
 						ret = tmp;
 					}
@@ -263,7 +263,7 @@ public class NsLookup extends Utility {
 		return ret;
 	}
 
-	private static Message doRecurtion(Message msg2, Message ret1) throws IOException {
+	private static Message doRecursion(Message msg2, Message ret1) throws IOException {
 		Message ret2 = ret1;
 		if(msg2.isResponseCodeNoError() && msg2.isRecursive()) {
 			if(!ret1.isAuthority()) {
@@ -283,7 +283,7 @@ public class NsLookup extends Utility {
 						}
 						Message tmp  = m2.query();
 						if( tmp != null && tmp.isResponseCodeNoError() ) {
-							ret2 = doRecurtion(msg2, tmp);
+							ret2 = doRecursion(msg2, tmp);
 							break;
 						}
 					}

@@ -25,6 +25,9 @@
  */
 package us.bringardner.net.dns;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
 This class implements a DNS PTR Resource Record as described in RFC 1035
  **/
@@ -103,12 +106,18 @@ public class Txt extends RR {
 			if( source != null) {
 				in = new ByteBuffer(source.getBuf(),sourcePos);
 			}
-			int sz = in.next();
-			byte[] data = new byte[sz];
-			for(int idx=0; idx < sz; idx++ ) {
-				data[idx] = (byte)in.next();
-			}
-			text = new String(data);
+			int sz = rdlength;
+			int pos = 0;
+			StringBuilder buf = new StringBuilder();
+			while(pos<sz) {
+				pos++;
+				int chunkLen = in.next();
+				for(int cnt=0; cnt < chunkLen; cnt ++) {
+					buf.append((char)in.next());
+					pos++;
+				}
+			}			
+			text = buf.toString();
 			dirty = false;
 		}
 	}
@@ -118,25 +127,41 @@ public class Txt extends RR {
 	 **/
 	public void setText(String text) { 
 		this.text = (text);
-		byte [] data = text.getBytes();
-		rdata = new byte[data.length+2];
-		rdlength = rdata.length;
-		rdata[0]=(byte) rdata.length;
-		for(int idx=0; idx < data.length; idx++ ) {
-			rdata[idx+1] = data[idx];
+		String tmp = text;
+		
+		List<String> chuncks = new ArrayList<>();
+		while(tmp.length()> 200) {
+			String val = tmp.substring(0,200);
+			tmp = tmp.substring(200);
+			chuncks.add(val);
 		}
-		rdata[rdata.length-1] = (byte)0;
+		if( !tmp.isEmpty()) {
+			chuncks.add(tmp);
+		}
+		
+		ByteBuffer buf = new ByteBuffer();
+	
+		for(String chunck : chuncks) {
+			//TXT Length	1-byte Integer	Length of TXT string.
+			buf.setByte((byte)chunck.length());
+			//TXT	String	The character-string.
+			buf.setBytes(chunck.getBytes());
+		}
+		
+		rdata = buf.getByteArray();		
+		rdlength = rdata.length;
+		
 		dirty = false;
+
 
 	}
 
 	public void toByteArray(ByteBuffer in) {
 		super.toByteArray(in);
-		byte [] data = text.getBytes();
-
-		in.setByte((byte)data.length);
-		in.setBytes(data);	
-		in.setByte((byte)0);
+		if( dirty) {
+			throw new RuntimeException("Txt is dirty");
+		}
+		in.setBytes(rdata);
 	}
 
 	/**

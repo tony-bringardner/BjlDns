@@ -30,7 +30,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InterruptedIOException;
+import java.net.SocketException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
@@ -377,6 +380,28 @@ public class TestDns implements DNS {
 
 	}
 
+	@Test
+	public void testLargeTxt() throws Exception {
+		Message msg = new Message();
+		msg.setQuestion("default._domainkey.foo.com", TXT, IN);
+		msg.setServer("localhost");
+		msg.setPort(8888);
+		Message res = msg.queryUDP();
+		int cnt = res.getAnswerCount();
+		assertEquals("cnt",1, cnt);
+		String expect = "v=DKIM1;t=s;p=MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA1MjtqU+T0iWO4iqE1h1dZjRdYQ/4PWoXE5A5jz6MQDnKJ4PQFQG2+Qw9cvBVKUQZreAnAnGx8PJb+QLiBDSofRKFx10h8aCGLZ/R052dqk+8kKEbMXWFpy8s7H/JpFYJ4eYqoQWM5FRzsPe1toySFBSnVNJOrSKcWHIwI/xUOQselIFcZXaXNSmvXIxKrmZ5pgSzmdAiiofwv0M9Ls2D9SoEC0Bw3o4uxezwNEpHW8L0n4gepnuJJjtGHc6x0Okg5QE8hhLN8afKPOUz6sx88t8dQzV2nF5FKgrpx+bhB6iiyEOPD8JLWsa62Z0mL7jgDDx28KZ+eJjdlmUvXbCWxwTC5SCCCRUfhY5dhpdFZ1yybqJ9LXduKK/IgwcDxBEgTQ+SsLtcWGRWk7mAMpysLXRmUWeCbuieIY8gVY7MfQ41BbL6lK5MiIAHYDdQ0fZivknp2KStGjUF39rlLnv7nszRvJFWQaClzwZ1zGr81ez9dn2g6garKKYfIeZuIgnGpwDQtdC8TRTkhpTfJkrkefqpG278qfDxmm09G+olv7sAT5U/2/fyd5XLM2DM7Xi/71T5bZaDxFqGSsr573/93Z8zv3k8hgxONZEhUJ83PcEFJGNmec9ya3ChHU6N2ew0KjCMyo0BXVENVGmiUQkF544BUXLa3/KuI1VMBlKoOnkCAwEAAQ==";
+		
+		RR ansnwer = res.getAnswer().get(0);
+		if (ansnwer instanceof Txt) {
+			Txt txt = (Txt) ansnwer;
+			Assertions.assertEquals( expect, txt.getText());
+		} else {
+			throw new RuntimeException("Answer is not a Txt="+ansnwer.getClass());
+		}
+		
+		
+	}
+	
 	@Test
 	public void testAAAA() {
 
