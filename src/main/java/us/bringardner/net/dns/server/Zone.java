@@ -90,6 +90,7 @@ public class Zone implements DNS {
 	}
 
 	public void setNames(List<Name> names) {
+		invalidateIndex();
 		this.names = names;
 	}
 
@@ -234,8 +235,20 @@ public class Zone implements DNS {
 		List<RR> v = getMatchingRRs(name);
 		if( v == null ) {
 			v = new ArrayList<RR>();
-			names.add(name);		
+			names.add(name);
 			rrs.add(names.indexOf(name),v);
+			//  Keep the index current (rebuilding it per record would make
+			//  loading quadratic)
+			java.util.Map<String,Integer> exact = exactIndex;
+			List<Integer> wild = wildIndex;
+			if( exact != null && wild != null ) {
+				int i = names.size()-1;
+				if( name.hasWildCard() ) {
+					wild.add(i);
+				} else {
+					exact.putIfAbsent(indexKey(name), i);
+				}
+			}
 		}
 
 		v.add(rr);
@@ -267,11 +280,72 @@ public class Zone implements DNS {
 		return lables;
 	}
 
+	//  Lookup index (rebuilt lazily after the names change):
+	//  lower-case exact name -> position of its first entry; positions of wildcard names in order
+	private volatile java.util.Map<String,Integer> exactIndex;
+	private volatile List<Integer> wildIndex;
+
+	private static String indexKey(Name n) {
+		return n.toString().toLowerCase(java.util.Locale.ROOT);
+	}
+
+	/** Build the lookup index from names. */
+	private synchronized void buildIndex() {
+		java.util.Map<String,Integer> exact = new java.util.HashMap<String,Integer>();
+		List<Integer> wild = new ArrayList<Integer>();
+		for(int i=0,sz=names.size(); i< sz; i++ ) {
+			Name n = names.get(i);
+			if( n.hasWildCard() ) {
+				wild.add(i);
+			} else {
+				exact.putIfAbsent(indexKey(n), i);
+			}
+		}
+		wildIndex = wild;
+		exactIndex = exact;
+	}
+
+	private void invalidateIndex() {
+		exactIndex = null;
+		wildIndex = null;
+	}
+
+	/**
+	 * Position of the entry matching name: the first non-wildcard name equal
+	 * to it (case-insensitive), otherwise the last matching wildcard name,
+	 * otherwise -1. Uses a hash lookup plus the (few) wildcard names instead
+	 * of comparing against every name in the zone.
+	 */
 	private int getMatchingIndex(Name name){
+		if( name.hasWildCard() ) {
+			//  A query name with a '*' label matches differently: keep the scan
+			return linearMatchingIndex(name);
+		}
+		java.util.Map<String,Integer> exact = exactIndex;
+		List<Integer> wild = wildIndex;
+		if( exact == null || wild == null ) {
+			buildIndex();
+			exact = exactIndex;
+			wild = wildIndex;
+		}
+		Integer hit = exact.get(indexKey(name));
+		if( hit != null ) {
+			return hit;
+		}
+		int ret = -1;
+		for(int i : wild) {
+			if( names.get(i).equals(name) ) {
+				ret = i;
+			}
+		}
+		return ret;
+	}
+
+	/** The original linear scan (reference behaviour; used for '*' query names and by tests). */
+	int linearMatchingIndex(Name name){
 		int ret = -1;
 		int wild = -1;
 		Name n = null;
-
 		for(int i=0,sz=names.size(); i< sz && ret == -1; i++ ) {
 			n = (Name)names.get(i);
 			if( n.equals(name) ) {
@@ -313,6 +387,12 @@ public class Zone implements DNS {
 		List<RR> ret = getMatchingRRs(n);
 
 		return ret;
+	}
+
+	/** For tests: the entry the original linear scan finds, or null. */
+	List<RR> linearMatchingRRs(Name name){
+		int idx = linearMatchingIndex(name);
+		return idx >= 0 ? rrs.get(idx) : null;
 	}
 
 	public List<RR> getMatchingRRs(Name name){
@@ -582,6 +662,7 @@ public class Zone implements DNS {
 		}
 		setWildCards(true);
 		populateNs();
+		buildIndex();
 	}
 
 	/**
@@ -676,6 +757,7 @@ public class Zone implements DNS {
 	}
 
 	public void setWildCards(boolean b) {
+		invalidateIndex();
 
 		for(int i=0,sz=names.size(); i<sz; i++ ) {
 			Name name = (Name)names.get(i);
