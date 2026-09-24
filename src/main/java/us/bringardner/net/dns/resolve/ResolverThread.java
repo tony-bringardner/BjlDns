@@ -221,7 +221,7 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 				QueryData question = (QueryData)fifo.remove();
 				setState("Returned on fifo");
 				if( running && question != null ) {
-					setState("Call Resolver:"+question);
+					setState("Call Resolver", question);
 					Message msg = null;
 					Section toResolve = question.getResolveQuestion();
 					try {
