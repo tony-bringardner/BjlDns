@@ -98,4 +98,39 @@ public void setQuestion(Section myQuestion)
 {
 	question = myQuestion;
 }
+
+/** Maximum number of CNAMEs followed for one query (server and resolver). */
+public static final int MAX_CNAME_CHAIN = 8;
+
+//  Names already visited while following CNAMEs for this query (lower case)
+private java.util.Set<String> cnameSeen;
+private int cnameCount = 0;
+
+/**
+ * Record that we are about to follow a CNAME to 'target'.
+ * 
+ * @return false if following it would loop (target already visited, including
+ * the original question name) or the chain is longer than MAX_CNAME_CHAIN.
+ */
+public synchronized boolean followCname(String target) {
+	if( cnameSeen == null ) {
+		cnameSeen = new java.util.HashSet<String>();
+		if( question != null ) {
+			cnameSeen.add(question.getName().toLowerCase());
+		}
+	}
+	if( target == null || cnameCount >= MAX_CNAME_CHAIN ) {
+		return false;
+	}
+	if( !cnameSeen.add(target.toLowerCase()) ) {
+		return false;
+	}
+	cnameCount++;
+	return true;
+}
+
+/** Number of CNAMEs followed so far. */
+public synchronized int getCnameCount() {
+	return cnameCount;
+}
 }

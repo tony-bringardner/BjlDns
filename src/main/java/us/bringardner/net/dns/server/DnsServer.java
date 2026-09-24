@@ -1319,9 +1319,17 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 					case DNS.CNAME:
 						if( type != DNS.CNAME) {
-							//  Need to add more stuff
-							query.setQuestion(new Section(((Cname)realrr).getCname(),type,question.getDnsClass()));
-							step2(query,ret);
+							//  Follow the CNAME (RFC 1034 4.3.2 step 3a), but never
+							//  in a loop (a -> b -> a) or past MAX_CNAME_CHAIN,
+							//  which used to recurse until StackOverflowError.
+							String cname = ((Cname)realrr).getCname();
+							if( query.followCname(cname) ) {
+								query.setQuestion(new Section(cname,type,question.getDnsClass()));
+								step2(query,ret);
+							} else {
+								logError("CNAME loop or chain too long at "+target+" -> "+cname
+										+" (followed "+query.getCnameCount()+"), answering with the chain so far");
+							}
 						}
 						break;
 					case DNS.NS:
