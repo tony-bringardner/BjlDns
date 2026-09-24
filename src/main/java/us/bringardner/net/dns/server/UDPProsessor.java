@@ -138,8 +138,14 @@ public void run ()
 		
 		try {
 
-			data = new byte[MAXUDPLEN];
-			recPckt = new DatagramPacket(data,data.length);
+			//  One receive buffer per thread (the request is copied out
+			//  before parsing); it used to allocate 2 KB per packet
+			if( recPckt == null ) {
+				data = new byte[MAXUDPLEN];
+				recPckt = new DatagramPacket(data,data.length);
+			} else {
+				recPckt.setLength(data.length);
+			}
 
 			// Get control
 			setState("Running before sync");			
@@ -163,6 +169,12 @@ public void run ()
 			//log("Exception in UDP sock.receive(recPckt)",ex);
 			doit = false;
 			setState("Running Error doit=false");
+			if( sock.isClosed() ) {
+				//  Nothing more will arrive; this used to spin in a tight
+				//  loop (receive fails at once) until the shutdown flag was set
+				setState("Running socket closed");
+				break;
+			}
 		}
 
 		ByteBuffer buf = null;
