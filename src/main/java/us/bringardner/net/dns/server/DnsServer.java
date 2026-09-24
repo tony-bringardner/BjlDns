@@ -102,6 +102,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	public static final String PROP_TCP_BIND_ADDRESS = "JDns.tcpBindAddress";
 	public static final String PROP_TCP_BACKLOG = "JDns.tcpBacklog";
 	public static final String PROP_TCP_TIMEOUT = "JDns.tcpTimeout";
+	/** Most TCP connections served at once (default 64). */
+	public static final String PROP_TCP_MAX_CONNECTIONS = "JDns.tcpMaxConnections";
+	/** An idle TCP connection is closed after this many ms (default 10000). */
+	public static final String PROP_TCP_IDLE_TIMEOUT = "JDns.tcpIdleTimeout";
 	/** Address the admin port listens on. Default: loopback only. Use 0.0.0.0 for all interfaces. */
 	public static final String PROP_ADMIN_BIND_ADDRESS = "JDns.adminBindAddress";
 	public static final String PROP_JDBC_URL = "JDns.jdbcURL";
@@ -448,9 +452,12 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			tcpAddress = createBindAddress(tmp);
 		}
 		int tcpTimeout = intProperty(PROP_TCP_TIMEOUT, alltimeout);
+		int tcpMaxConnections = intProperty(PROP_TCP_MAX_CONNECTIONS, TCPProsessor.DEFAULT_MAX_CONNECTIONS);
+		int tcpIdleTimeout = intProperty(PROP_TCP_IDLE_TIMEOUT, TCPProsessor.DEFAULT_IDLE_TIMEOUT);
 
-		log("TCP BindAddress = "+tcpAddress+":"+tcpPort+" backlog="+backlog+" timeout="+tcpTimeout);
-		TCPProsessor.initTCPProsessor(tcpPort,backlog,tcpAddress,tcpTimeout);
+		log("TCP BindAddress = "+tcpAddress+":"+tcpPort+" backlog="+backlog+" timeout="+tcpTimeout
+				+" maxConnections="+tcpMaxConnections+" idleTimeout="+tcpIdleTimeout);
+		TCPProsessor.initTCPProsessor(tcpPort,backlog,tcpAddress,tcpTimeout,tcpMaxConnections,tcpIdleTimeout);
 
 		for(int i=0; i< TCPProcs.length; i++ ) {
 			TCPProcs[i] = new TCPProsessor(this,i);
@@ -1718,7 +1725,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			} catch(IOException ex) {
 			}
 		}
-		boolean ret = true;
+		long remaining = deadline - System.currentTimeMillis();
+		boolean ret = TCPProsessor.shutdownConnections(Math.max(1, remaining));
 		for(Thread w : workers) {
 			long left = deadline - System.currentTimeMillis();
 			if( left > 0 ) {
