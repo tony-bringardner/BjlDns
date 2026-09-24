@@ -125,12 +125,11 @@ public class RemoteServer  extends DnsBaseClass {
 				if( addr.size() >= MAX_ADDRESSES ) {
 					break;
 				}
-				if( s.getAddress() == null ) {
-					continue;
-				}
 				boolean known = false;
 				for(ServerA mine : addr) {
-					if( s.getAddress().equals(mine.getAddress()) && s.getPort() == mine.getPort() ) {
+					if( s.getAddress() != null ? (s.getAddress().equals(mine.getAddress()) && s.getPort() == mine.getPort())
+							//  glueless: same name server name
+							: (mine.getAddress() == null && s.getName() != null && s.getName().equalsIgnoreCase(mine.getName())) ) {
 						known = true;
 						break;
 					}

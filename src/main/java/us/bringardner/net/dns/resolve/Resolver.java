@@ -549,6 +549,12 @@ public class Resolver  extends DnsBaseClass
 		return ret;
 	}
 
+	/** For tests: set the root ('safety belt') servers. */
+	static void setRootServersForTests(List<RemoteServer> list) {
+		sbelt.clear();
+		sbelt.addAll(list);
+	}
+
 	/** For tests: the live cache. */
 	static Cache getCache() {
 		return cache;
