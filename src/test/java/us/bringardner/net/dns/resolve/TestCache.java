@@ -232,7 +232,7 @@ public class TestCache {
 		c.put(response("zero.example.com","10.0.0.1",0));   // TTL 0 = do not cache
 		Message empty = new Message();
 		empty.setQuestion("none.example.com", DNS.A, DNS.IN);
-		c.put(empty);                                          // no answers
+		c.put(empty);                                          // no answers and no SOA
 		assertEquals(0, c.size());
 	}
 

@@ -71,6 +71,8 @@ public class Resolver  extends DnsBaseClass
 	//private static int current=0;
 	//private static int sbeltSize;
 	public static final String PROP_MAX_DELEGATIONS = "JDns.maxDelegations";
+	/** seconds, default 10800 (3 hours) */
+	public static final String PROP_MAX_NEGATIVE_TTL = "JDns.maxNegativeTtl";
 	public static final String PROP_DELEGATION_MAX_AGE = "JDns.delegationMaxAge";
 
 	/** A zone's name servers learned from a referral. */
@@ -347,6 +349,13 @@ public class Resolver  extends DnsBaseClass
 		}
 		startCacheSweeper(prop);
 
+		if( (tmp=prop.getProperty(PROP_MAX_NEGATIVE_TTL)) != null ) {
+			try {
+				Cache.setMaxNegativeTtl(Long.parseLong(tmp.trim()));
+			} catch(Exception ex) {
+				new Resolver().logError("Error setting "+PROP_MAX_NEGATIVE_TTL,ex);
+			}
+		}
 		if( (tmp=prop.getProperty(PROP_MAX_DELEGATIONS)) != null ) {
 			try {
 				setMaxDelegations(Integer.parseInt(tmp.trim()));
