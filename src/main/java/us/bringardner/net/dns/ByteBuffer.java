@@ -542,7 +542,9 @@ ARCOUNT         an unsigned 16 bit integer specifying the number of
 		as described in RFC 1035.
 	 **/
 	public void setName(String name) {
-		if( name == null ) {
+		if( name == null || name.isEmpty() || name.equals(".") ) {
+			//  The root name (e.g. the OPT owner) is a single zero octet;
+			//  "" used to be written as an empty label plus the terminator
 			setByte((byte)0);
 			return ;
 		}

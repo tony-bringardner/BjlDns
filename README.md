@@ -50,11 +50,15 @@ WantedBy=multi-user.target
 
 Set in the properties file (`JDns.properties`) or with `-D`. Besides the existing ones (`JDns.dnsPort`, `JDns.bindAddress`, `JDns.zone.dir`, `JDns.master.zone`, ...):
 
+A bind address of `localhost` means this host's own name (its network address), not the loopback interface, so the server is reachable from the network; a warning is logged. Use `127.0.0.1` to listen on loopback only.
+
 | Property | Default | Meaning |
 |---|---|---|
 | `JDns.udpTimeout` / `JDns.tcpTimeout` | `JDns.timeout` (5000) | Socket timeouts (ms); how often listeners check for shutdown |
 | `JDns.tcpBindAddress` / `JDns.udp.bindAddress` | `JDns.bindAddress` | Per-protocol listen address |
-| `JDns.udpMaxResponse` | 512 | Largest UDP response (bytes); bigger answers are truncated (TC) and clients retry over TCP |
+| `JDns.udpMaxResponse` | 512 | Largest UDP response (bytes) to clients without EDNS; bigger answers are truncated (TC) and clients retry over TCP |
+| `JDns.zoneCutReferrals` | true | Names at or below NS records below a zone's apex (a delegation) get a referral (NS + glue, not authoritative) instead of NXDOMAIN / an authoritative answer. Set false if your zones put NS records on ordinary hosts |
+| `JDns.ednsUdpSize` | 1232 | Largest UDP response to EDNS clients (512–4096; the client's own size is used if smaller). Responses echo an OPT record; EDNS versions other than 0 get BADVERS |
 | `JDns.tcpMaxConnections` | 64 | TCP connections served at once; more are closed immediately |
 | `JDns.tcpIdleTimeout` | 10000 | An idle TCP connection is closed after this many ms |
 | `JDns.maxCacheEntries` | 10000 | Resolver cache size (LRU) |
@@ -63,9 +67,11 @@ Set in the properties file (`JDns.properties`) or with `-D`. Besides the existin
 | `JDns.maxNegativeTtl` | 10800 | Upper bound (s) for caching "does not exist" answers |
 | `JDns.maxDelegations` | 10000 | Learned delegations kept (LRU) |
 | `JDns.delegationMaxAge` | 3600 | Seconds a learned delegation is used before a fresh referral replaces it |
-| `Resolver.maxBacklog` | 20 | Queued recursive queries; when full, clients get SERVFAIL |
+| `Resolver.maxBacklog` | 200 | Queued recursive queries; when full, clients get SERVFAIL (a CNAME answer is sent without the target's records). Logged at most every 10 s |
+| `TCPProcCount` | 1 | TCP acceptor threads (connections are served by the pool above) |
 | `JDns.adminBindAddress` | loopback | Admin port listen address (`0.0.0.0` for all interfaces) |
 | `JDns.adminSecret` | none | Shared secret for the admin port (challenge-response). Without it only local clients are accepted. `DnsAdminClient` reads the same property |
+| `JDns.adminTls` | false | TLS on the admin port, using the standard `javax.net.ssl.keyStore` / `keyStorePassword` properties (client: `javax.net.ssl.trustStore`). `DnsAdminClient` reads the same property. Recommended when `JDns.adminBindAddress` is not loopback: the challenge-response protects the secret, not the session |
 | `JDns.adminMaxConnections` | 8 | Admin sessions at once |
 | `JDns.adminIdleTimeout` | 600000 | Idle admin sessions are closed after this many ms |
 | `JDns.useDataBase` | only if `JDns.jdbcURL` is set | Use the database for common domains and dynamic records |

@@ -63,6 +63,7 @@ import us.bringardner.net.dns.A;
 import us.bringardner.net.dns.Cname;
 import us.bringardner.net.dns.DNS;
 import us.bringardner.net.dns.DnsBaseClass;
+import us.bringardner.net.dns.Edns;
 import us.bringardner.net.dns.Header;
 import us.bringardner.net.dns.Message;
 import us.bringardner.net.dns.Mx;
@@ -97,6 +98,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	public static final String PROP_UDP_TIMEOUT = "JDns.udpTimeout";
 	/** Largest UDP response in bytes (default 512, RFC 1035). Larger answers are truncated. */
 	public static final String PROP_UDP_MAX_RESPONSE = "JDns.udpMaxResponse";
+	public static final String PROP_EDNS_UDP_SIZE = "JDns.ednsUdpSize";
+	public static final String PROP_ZONE_CUT_REFERRALS = "JDns.zoneCutReferrals";
 
 	public static final String PROP_TCP_PORT = "JDns.tcpPort";	
 	public static final String PROP_TCP_BIND_ADDRESS = "JDns.tcpBindAddress";
@@ -114,6 +117,13 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * Without it only clients on this machine may use the admin port.
 	 */
 	public static final String PROP_ADMIN_SECRET = "JDns.adminSecret";
+	/**
+	 * true: the admin port uses TLS (SSLServerSocketFactory.getDefault(),
+	 * configured with the standard javax.net.ssl.keyStore / keyStorePassword
+	 * properties). DnsAdminClient reads the same property and then uses
+	 * SSLSocketFactory.getDefault() (javax.net.ssl.trustStore).
+	 */
+	public static final String PROP_ADMIN_TLS = "JDns.adminTls";
 	/** Most admin sessions at once (default 8). */
 	public static final String PROP_ADMIN_MAX_CONNECTIONS = "JDns.adminMaxConnections";
 	/** An idle admin session is closed after this many ms (default 600000). */
@@ -218,7 +228,27 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 	private volatile boolean running = false;
 
-	private int TCPProcCount = 4;	
+	//  TCP acceptor threads. Connections are served by a separate pool
+	//  (JDns.tcp.maxConnections), so one acceptor is enough; it was 4.
+	private int TCPProcCount = 1;
+
+	//  Answer names at or below a delegation (NS records below the apex)
+	//  with a referral. JDns.zoneCutReferrals=false restores the old
+	//  behaviour for zones that list NS records on ordinary hosts.
+	private volatile boolean zoneCutReferrals = true;
+
+	public boolean isZoneCutReferrals() {
+		return zoneCutReferrals;
+	}
+
+	public void setZoneCutReferrals(boolean on) {
+		zoneCutReferrals = on;
+	}
+
+	/** Number of TCP acceptor threads (property TCPProcCount). */
+	public int getTcpProcCount() {
+		return TCPProcCount;
+	}	
 	private TCPProsessor [] TCPProcs;
 	private String defaultZoneName;
 	private File dynamicFile;
@@ -284,6 +314,88 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * @throws SQLException if it can't be opened. (It used to log and return
 	 * null, and every caller then failed with a NullPointerException.)
 	 */
+	//  One JDBC connection, kept open and reused (it used to be opened and
+	//  closed for every load, update and delete). Guarded by dbLock; database
+	//  work is rare (reloads, dynamic updates) so it is simply serialized.
+	private final Object dbLock = new Object();
+	private Connection dbConnection;
+	private long dbConnectionsOpened;
+	static final int DB_VALID_TIMEOUT_SECONDS = 2;
+
+	/** Work done with the shared connection. */
+	interface SqlWork<T> {
+		T run(Connection con) throws SQLException;
+	}
+
+	/**
+	 * Run work with the shared connection: opened on first use, checked with
+	 * isValid() before reuse (the database may have closed an idle one) and
+	 * reopened if needed. After an SQLException the connection is closed, so
+	 * the next call starts with a fresh one.
+	 * Lock order is dynamicLock, then dbLock (the dynamic update methods
+	 * call this while holding dynamicLock), so work must not take dynamicLock.
+	 */
+	<T> T withConnection(SqlWork<T> work) throws SQLException {
+		synchronized (dbLock) {
+			Connection con = dbConnection;
+			if( con != null && !isUsable(con) ) {
+				closeQuietly(con);
+				con = dbConnection = null;
+			}
+			if( con == null ) {
+				con = getConnection();
+				dbConnection = con;
+				dbConnectionsOpened++;
+			}
+			try {
+				return work.run(con);
+			} catch(SQLException | RuntimeException ex) {
+				closeQuietly(con);
+				dbConnection = null;
+				throw ex;
+			}
+		}
+	}
+
+	/** How many JDBC connections have been opened (for tests and status). */
+	long getDbConnectionsOpened() {
+		synchronized (dbLock) {
+			return dbConnectionsOpened;
+		}
+	}
+
+	/** Close the shared JDBC connection (on shutdown). */
+	void closeDbConnection() {
+		synchronized (dbLock) {
+			closeQuietly(dbConnection);
+			dbConnection = null;
+		}
+	}
+
+	private static boolean isUsable(Connection con) {
+		try {
+			return con.isValid(DB_VALID_TIMEOUT_SECONDS);
+		} catch(SQLException ex) {
+			return false;
+		} catch(AbstractMethodError ex) {
+			//  Very old (pre JDBC 4) driver without isValid
+			try {
+				return !con.isClosed();
+			} catch(SQLException e) {
+				return false;
+			}
+		}
+	}
+
+	private static void closeQuietly(AutoCloseable c) {
+		if( c != null ) {
+			try {
+				c.close();
+			} catch(Exception ex) {
+			}
+		}
+	}
+
 	private Connection getConnection() throws SQLException {
 		String jdbcClass = stringProperty("JDns.jdbcClass");
 		String url = stringProperty(PROP_JDBC_URL);
@@ -440,6 +552,11 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		//  setting the UDP one, so it changed the TCP timeout and not UDP's)
 		int udpTimeout = intProperty(PROP_UDP_TIMEOUT, alltimeout);
 		UDPProsessor.setMaxResponseSize(intProperty(PROP_UDP_MAX_RESPONSE, UDPProsessor.getMaxResponseSize()));
+		Edns.setServerUdpSize(intProperty(PROP_EDNS_UDP_SIZE, Edns.DEFAULT_UDP_SIZE));
+		String refs = stringProperty(PROP_ZONE_CUT_REFERRALS);
+		if( refs != null ) {
+			zoneCutReferrals = refs.trim().toLowerCase().startsWith("t");
+		}
 
 		UDPProcs = new UDPProsessor[UDPProcCount];
 		Thread t = null;
@@ -484,6 +601,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 		//  ---- Admin (the socket is opened in run())
 		setAdminPort(intProperty(PROP_ADMIN_PORT, getAdminPort()));
+		serverSocketFactory = adminSocketFactory(stringProperty(PROP_ADMIN_TLS), serverSocketFactory);
+		if( serverSocketFactory instanceof javax.net.ssl.SSLServerSocketFactory ) {
+			log("Admin port uses TLS");
+		}
 		adminBindAddress = InetAddress.getLoopbackAddress();
 		if( (tmp=stringProperty(PROP_ADMIN_BIND_ADDRESS)) != null) {
 			adminBindAddress = createBindAddress(tmp);
@@ -584,7 +705,11 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	private InetAddress createBindAddress(String tmp) throws UnknownHostException {
 		InetAddress ret = InetAddress.getLoopbackAddress();
 		if( tmp.equals("localhost")) {
+			//  Kept for compatibility, but surprising: "localhost" here means
+			//  this host's own name/address, not the loopback interface
 			ret = InetAddress.getLocalHost();
+			logError("Bind address 'localhost' means this host's address "+ret
+					+" (reachable from the network), not the loopback; use 127.0.0.1 to listen on loopback only");
 		} else {
 			ret = InetAddress.getByName(tmp);
 		}
@@ -690,40 +815,29 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	private void loadCommon() {
 
 		if( useDatabase()) {
-			Connection con = null;
-			Statement stmt = null;
-			ResultSet rs = null;
-
 			try {
-				con = getConnection();
-				stmt = con.createStatement();
-
-				String sql = "select name from domains";
-
-				rs = stmt.executeQuery(sql);
-
-				while( rs.next() ) {
-					String name = rs.getString(1);
+				List<String> names = withConnection(con -> {
+					List<String> ret = new ArrayList<String>();
+					try(Statement stmt = con.createStatement();
+							ResultSet rs = stmt.executeQuery("select name from domains")) {
+						while( rs.next() ) {
+							ret.add(rs.getString(1));
+						}
+					}
+					return ret;
+				});
+				for(String name : names) {
 					common.put(name.toLowerCase(),name);
 					log("Install common domain ="+name);
-
 				}
-				try { rs.close(); } catch(Exception ex) {}
-
-
 			} catch (Throwable ex) {
 				log("Database not availible",ex);
-			} finally {
-				if( rs != null ) try { rs.close(); } catch(Exception ex) {}
-				if( stmt != null ) try { stmt.close(); } catch(Exception ex) {}
-				if( con != null ) try { con.close(); } catch(Exception ex) {}
 			}
-
 		}
 
 	}
 
-	private void loadDynamic() {
+	void loadDynamic() {
 		try {
 			if( !loadDynamicFromDb()) {
 				dynamicFile = loadDynamicFromFile(false);
@@ -752,80 +866,90 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	}
 	 */
 
+	/**
+	 * Add or change a dynamic entry. The store (database, or the dynamic file
+	 * when there is no database) is written FIRST; memory changes only if that
+	 * succeeds, so a failed write leaves the old state everywhere. (Memory used
+	 * to change first: a failed write left the server answering with an
+	 * address the store didn't have.)
+	 * 
+	 * @throws SQLException if the database write fails (nothing is changed)
+	 */
 	public void addOrUpdateDynamic(String name, String ip) throws ClassNotFoundException, SQLException {
 		synchronized (dynamicLock) {
 			List<A> dyn = getDynamic(name);
 			if(dyn == null ) {
-				A a =	addDynamic(name, ip);
+				//  Validates the domain and the address; nothing is published yet
+				A a = buildDynamic(name, ip);
 				if( a == null ) {
 					logError("-Undefined domain for "+name);
 					return;
-				} else {
-					createDynamic(name,ip);
-					return;
 				}
+				createDynamic(name,ip);
+				storeDynamicFileOrThrow(withEntry(a));
+				putDynamic(a);
 			} else {
-				A a = dyn.get(0);
-				String old = a.getAddressString();
-				if( !ip.equals(old)) {
-					replaceDynamicAddress(a, ip);
+				A old = dyn.get(0);
+				A a = old;
+				if( !ip.equals(old.getAddressString())) {
+					a = copyWithAddress(old, ip);
+				}
+				//  Keep track of the last time we were contacted. If there is no
+				//  row (the entry came from the dynamic file), insert one.
+				if( saveDynamic(name,ip,STATUS_ACTIVE) == 0 ) {
+					createDynamic(name,ip);
+				}
+				if( a != old ) {
+					storeDynamicFileOrThrow(withEntry(a));
+					putDynamic(a);
 				}
 			}
 		}
-		// Keep track of the last time we were contacted
-		saveDynamic(name,ip,STATUS_ACTIVE);
-
-
 	}
 
-	private void saveDynamic(String name, String ip, String status) throws ClassNotFoundException, SQLException {
+	/** storeDynamicFile, with an I/O failure reported like a database failure. */
+	private void storeDynamicFileOrThrow(Map<String, List<A>> after) throws SQLException {
+		try {
+			storeDynamicFile(after);
+		} catch(IOException ex) {
+			throw new SQLException("Could not write the dynamic file: "+ex.getMessage(), ex);
+		}
+	}
+
+	/** The dynamic entries as they would be with a added or replaced. */
+	private Map<String, List<A>> withEntry(A a) {
+		Map<String, List<A>> ret = new HashMap<String, List<A>>(dynamic);
+		ret.put(dynamicKey(a.getName()), Collections.singletonList(a));
+		return ret;
+	}
+
+	/** @return rows updated, or -1 if no database is used */
+	private int saveDynamic(String name, String ip, String status) throws ClassNotFoundException, SQLException {
+		int ret = -1;
 		if( useDatabase()) {
-			Connection con = null;
-			PreparedStatement stmt = null;
-
-			try {
-				con = getConnection();
-				stmt = con.prepareStatement(SQL_UPDATE_DYN_DNS);
-				stmt.setString(POS_NAME, name);
-				stmt.setString(POS_IP, ip);
-				stmt.setString(POS_STATUS, status);
-				stmt.setTimestamp(POS_LAST_UPDATE, new Timestamp(System.currentTimeMillis()));
-				stmt.executeUpdate();
-
-			} finally {
-				if( stmt != null ) {
-					try { stmt.close(); } catch(Exception ee) {}
+			ret = withConnection(con -> {
+				try(PreparedStatement stmt = con.prepareStatement(SQL_UPDATE_DYN_DNS)) {
+					stmt.setString(POS_NAME, name);
+					stmt.setString(POS_IP, ip);
+					stmt.setString(POS_STATUS, status);
+					stmt.setTimestamp(POS_LAST_UPDATE, new Timestamp(System.currentTimeMillis()));
+					return stmt.executeUpdate();
 				}
-				if( con != null ) {
-					try { con.close(); } catch(Exception ee) {}
-				}
-			}
+			});
 		}
-
+		return ret;
 	}
-
 	private void createDynamic(String name, String ip) throws ClassNotFoundException, SQLException {
-		Connection con = null;
-		PreparedStatement stmt = null;
-
 		if( useDatabase()) {
-			try {
-				con = getConnection();
-				stmt = con	.prepareStatement(SQL_CREATE_DYN_DNS);
-				stmt.setString(POS_NAME, name);
-				stmt.setString(POS_IP, ip);
-				stmt.setString(POS_STATUS, STATUS_ACTIVE);
-				stmt.setTimestamp(POS_LAST_UPDATE, new Timestamp(System.currentTimeMillis()));
-				stmt.executeUpdate();
-
-			} finally {
-				if( stmt != null ) {
-					try { stmt.close(); } catch(Exception ee) {}
+			withConnection(con -> {
+				try(PreparedStatement stmt = con.prepareStatement(SQL_CREATE_DYN_DNS)) {
+					stmt.setString(POS_NAME, name);
+					stmt.setString(POS_IP, ip);
+					stmt.setString(POS_STATUS, STATUS_ACTIVE);
+					stmt.setTimestamp(POS_LAST_UPDATE, new Timestamp(System.currentTimeMillis()));
+					return stmt.executeUpdate();
 				}
-				if( con != null ) {
-					try { con.close(); } catch(Exception ee) {}
-				}
-			}
+			});
 		}
 	}
 
@@ -846,19 +970,23 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	private boolean loadDynamicFromDb() throws ClassNotFoundException, SQLException {
 		boolean ret = false;
 		if( useDatabase()) {
-			Connection con = null;
-			Statement stmt = null;
-			ResultSet rs = null;
 			log("Loading dynamic from database");
-
-			try {
-				con = getConnection();
-				stmt = con.createStatement();
-				rs = stmt.executeQuery(SQL_SELECT_ALL);
-
-				while(rs.next()) {
-					String name = rs.getString(1);
-					String ip = rs.getString(2);
+			//  Read the rows first, then update memory: dynamicLock is never
+			//  taken while the database connection is held (see withConnection)
+			List<String[]> dbRows = withConnection(con -> {
+				List<String[]> list = new ArrayList<String[]>();
+				try(Statement stmt = con.createStatement();
+						ResultSet rs = stmt.executeQuery(SQL_SELECT_ALL)) {
+					while(rs.next()) {
+						list.add(new String[] {rs.getString(1), rs.getString(2)});
+					}
+				}
+				return list;
+			});
+			{
+				for(String [] row : dbRows) {
+					String name = row[0];
+					String ip = row[1];
 					synchronized (dynamicLock) {
 						List<A> dyn = getDynamic(name);
 						if( dyn != null ) {
@@ -878,33 +1006,28 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				if( ret ) {
 					try {
 						dynamicFile = saveDynamicToFile();
-					} catch (FileNotFoundException e) {
+					} catch (IOException e) {
 						logError("Could not save dynamic to file",e);
 					}
-				}
-			} finally {
-				if( rs != null ) {
-					try { rs.close(); } catch(Exception ee) {}
-				}
-				if( stmt != null ) {
-					try { stmt.close(); } catch(Exception ee) {}
-				}
-				if( con != null ) {
-					try { con.close(); } catch(Exception ee) {}
 				}
 			}
 		}
 		return ret;
 	}
 
-	private File loadDynamicFromFile(boolean saveNew) throws IOException {
+	/** The dynamic entries file (JDns.dynamicFileName, relative to the DNS directory). */
+	private File dynamicFilePath() {
 		String fileName = getProperty(PROP_DYNAMIC,"dynamic.txt");
-		log("Loading dynamic "+PROP_DYNAMIC+"= "+fileName);
-
 		File ret = new File(fileName);
 		if( !ret.isAbsolute() ) {
 			ret = new File(dnsDir,fileName);
 		}
+		return ret;
+	}
+
+	private File loadDynamicFromFile(boolean saveNew) throws IOException {
+		File ret = dynamicFilePath();
+		log("Loading dynamic "+PROP_DYNAMIC+"= "+ret);
 
 		if( ret.exists() ) {
 			BufferedReader in = new BufferedReader(new FileReader(ret));
@@ -913,17 +1036,23 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				p.load(in);
 				for(Object key : p.keySet()) {
 					String name = key.toString();
+					//  The address comes from the file (it used to be read with
+					//  getProperty(name), i.e. from the system properties, so every
+					//  entry got a null address and loading failed).
+					String ip = p.getProperty(name);
 					if( getDynamic(name) == null) {
-						if( saveNew) {
-							try {
-								addOrUpdateDynamic(name, getProperty(name));								
-							} catch (ClassNotFoundException | SQLException e) {								
-								throw new IOException(e);
+						try {
+							if( saveNew) {
+								addOrUpdateDynamic(name, ip);
+							} else {
+								addDynamic(name, ip);
+								log("Loading dynamic from file "+name+" "+ip);
 							}
-						} else {
-							addDynamic(name, getProperty(name));
-							log("Loading dynamic from file "+name+" "+getProperty(name));
-
+						} catch (ClassNotFoundException | SQLException e) {
+							throw new IOException(e);
+						} catch (RuntimeException e) {
+							//  One bad line (e.g. an invalid address) doesn't stop the rest
+							logError("Skipping dynamic entry "+name+"="+ip+" in "+ret+": "+e.getMessage());
 						}
 					}
 				}				
@@ -935,37 +1064,58 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		return ret;
 	}
 
+	public File saveDynamicToFile() throws IOException {
+		return saveDynamicToFile(dynamic);
+	}
 
-	public File saveDynamicToFile() throws FileNotFoundException {
-		String fileName = getProperty(PROP_DYNAMIC,"dynamic.txt");
-
-		log(PROP_DYNAMIC+"= "+fileName);
-
-
-		File ret = new File(fileName);
-		if( !ret.isAbsolute() ) {
-			ret = new File(dnsDir,fileName);
-		}
-
-		PrintStream out = new PrintStream(new FileOutputStream(ret));
+	/**
+	 * Write entries (name -> [A]) to the dynamic file. The file is written to
+	 * a temporary file and renamed, so a crash or a concurrent reader never
+	 * sees a half-written file.
+	 */
+	private File saveDynamicToFile(Map<String, List<A>> entries) throws IOException {
+		File ret = dynamicFilePath();
+		log(PROP_DYNAMIC+"= "+ret);
+		File dir = ret.getAbsoluteFile().getParentFile();
+		File tmp = File.createTempFile(ret.getName(), ".tmp", dir);
 		try {
-			out.println("# Dynamic entries saved at "+(new Date()));
-			for (Iterator<String> it = dynamic.keySet().iterator(); it.hasNext();) {
-				String name = (String) it.next();
-				List<A> list = dynamic.get(name);
-				A a = (A)list.get(0);
-				out.println(name+"="+a.getAddressString());
+			PrintStream out = new PrintStream(new FileOutputStream(tmp));
+			try {
+				out.println("# Dynamic entries saved at "+(new Date()));
+				for(Map.Entry<String, List<A>> e : new java.util.TreeMap<String, List<A>>(entries).entrySet()) {
+					out.println(e.getKey()+"="+e.getValue().get(0).getAddressString());
+				}
+			} finally {
+				out.close();
+			}
+			if( out.checkError() ) {
+				throw new IOException("Error writing "+tmp);
+			}
+			try {
+				java.nio.file.Files.move(tmp.toPath(), ret.toPath(),
+						java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+			} catch(java.nio.file.AtomicMoveNotSupportedException ex) {
+				java.nio.file.Files.move(tmp.toPath(), ret.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
 			}
 		} finally {
-			try {
-				out.close();
-			} catch (Exception e) {
-			}
+			tmp.delete();
 		}
-
-
 		return ret;
 	}
+
+	/**
+	 * Without a database the dynamic file is the store: write the entries as
+	 * they will be after a change, before the change is made in memory.
+	 * (Admin changes used to exist only in memory and were lost on restart.)
+	 */
+	private void storeDynamicFile(Map<String, List<A>> after) throws IOException {
+		if( !useDatabase() ) {
+			dynamicFile = saveDynamicToFile(after);
+			//  Our own write is not a change to reload
+			dynamicLoaded = dynamicFile.lastModified();
+		}
+	}
+
 
 	private File [] getZoneFiles() {
 		File [] ret = 	zoneDir.listFiles(new FilenameFilter() {
@@ -1294,6 +1444,19 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * Creation date: (6/16/2003 9:29:24 AM)
 	 * @param newServerSocketFactory javax.net.ServerSocketFactory
 	 */
+	/**
+	 * The admin listener's factory: JDns.adminTls=true replaces the default
+	 * (plain) factory with SSLServerSocketFactory.getDefault(); a factory set
+	 * with setServerSocketFactory is kept.
+	 */
+	static ServerSocketFactory adminSocketFactory(String tlsProperty, ServerSocketFactory current) {
+		if( tlsProperty != null && tlsProperty.trim().toLowerCase().startsWith("t")
+				&& current == ServerSocketFactory.getDefault() ) {
+			return javax.net.ssl.SSLServerSocketFactory.getDefault();
+		}
+		return current;
+	}
+
 	public static void setServerSocketFactory(javax.net.ServerSocketFactory newServerSocketFactory) {
 		serverSocketFactory = newServerSocketFactory;
 	}
@@ -1348,7 +1511,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 		} else {
 			if( !recursionAvailable ) {
-				ret.setResponseCodeNameError();
+				//  Not our name and we don't recurse: REFUSED (RFC 8906 3.1.5).
+				//  It used to be NXDOMAIN, claiming that names we are not
+				//  authoritative for (e.g. google.com) don't exist.
+				ret.setResponseCodeRefused();
 			} else {
 				ret = step4And5(query , ret);
 			}
@@ -1445,6 +1611,18 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		RR rr = null;
 		int type = question.getType();
 		int myType = 0;
+
+		//  RFC 1034 4.3.2 step 3b: at or below a zone cut (NS records at a name
+		//  below the apex) our data is not authoritative; answer with a
+		//  referral. It used to answer NXDOMAIN for names below the cut, and
+		//  an authoritative empty answer (A queries) at the cut itself.
+		//  A dynamic entry for the name still wins.
+		if( zoneCutReferrals && !dynamic.containsKey(target) ) {
+			List<RR> cut = zone.findDelegation(target);
+			if( cut != null ) {
+				return referral(ret, zone, cut);
+			}
+		}
 
 		if( type == DNS.SOA ) {
 			Soa soa = zone.getSoa();
@@ -1600,6 +1778,35 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		return ret;
 	}
 
+	/**
+	 * A referral: the delegation's NS records in the authority section and
+	 * the addresses we have for them (glue) in the additional section, not
+	 * authoritative, NOERROR (RFC 1034 4.3.2 step 3b, RFC 1035 6.2.6).
+	 * After a CNAME from our own data the answer section is kept (and so is
+	 * AA, which covers the CNAME).
+	 */
+	private Message referral(Message ret, Zone zone, List<RR> cut) {
+		if( ret.getAnswerCount() == 0 ) {
+			ret.getHeader().setAA(false);
+		}
+		ret.setResponseCodeNoError();
+		for(RR rr : cut) {
+			ret.addAuthority(rr.copy());
+		}
+		for(RR rr : cut) {
+			String host = ((Ns)rr).getNs();
+			for(int t : new int[] {DNS.A, DNS.AAAA}) {
+				RR glue = zone.getMatchingRR(host, t);
+				if( glue != null ) {
+					RR g = glue.copy();
+					g.replaceWildCards(new Name(host));
+					ret.addAdditional(g);
+				}
+			}
+		}
+		return ret;
+	}
+
 	/*
 
    4. Start matching down in the cache.  If QNAME is found in the
@@ -1634,13 +1841,14 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				ret = null;
 			} else {
 				//  Backlog full: say so now instead of dropping the query
-				logError("Resolver backlog full, SERVFAIL for "+question.getQuestion());
+				logBacklogFull();
 				ret = us.bringardner.net.dns.resolve.ResolverThread.failure(question, DNS.SERVER_ERROR);
 			}
 		} else {
-			ret.setID(msg.getID());
+			//  Recursion available but not desired, and not our name:
+			//  REFUSED (it used to be an empty NOERROR answer).
+			ret.setResponseCodeRefused();
 		}
-
 		if( ret != null ) {
 			ret.setID(msg.getID());
 		}
@@ -1680,10 +1888,19 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		if( us.bringardner.net.dns.resolve.ResolverThread.addQuery(req) ) {
 			return null;
 		}
-		logError("Resolver backlog full, answering "+partial.getFirstQuestion()+" with the CNAME chain only");
+		//  The chain alone is a valid answer: the client's resolver restarts
+		//  the lookup at the target (RFC 1034 4.3.2 step 3a)
+		logBacklogFull();
 		req.setPartialAnswer(null);
 		req.setCnameTarget(null);
 		return partial;
+	}
+
+	private void logBacklogFull() {
+		String msg = us.bringardner.net.dns.resolve.ResolverThread.backlogFullWarning();
+		if( msg != null ) {
+			logError(msg);
+		}
 	}
 
 	/** Resolve in the calling thread; null if it fails. */
@@ -1768,10 +1985,16 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * in use by a query thread and is never modified).
 	 */
 	private A replaceDynamicAddress(A old, String ip) {
+		A a = copyWithAddress(old, ip);
+		putDynamic(a);
+		return a;
+	}
+
+	/** A new A like old but with another address (old is not modified). */
+	private static A copyWithAddress(A old, String ip) {
 		A a = new A(old.getName());
 		a.setAddress(ip);
 		a.setTTL(old.getTTL());
-		putDynamic(a);
 		return a;
 	}
 
@@ -1783,21 +2006,30 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * @return the A entry created or null if the domain is not valid
 	 */
 	public A addDynamic(String name, String addr) {
+		A ret = buildDynamic(name, addr);
+		if( ret != null ) {
+			putDynamic(ret);
+		}
+		return ret;
+	}
+
+	/**
+	 * Build (but don't publish) a dynamic A with the TTL of its zone.
+	 * @return null if the name is not in one of our domains
+	 * @throws IllegalArgumentException if the address is invalid
+	 */
+	private A buildDynamic(String name, String addr) {
 		A ret = null;
 		Name nn = new Name(name);
 		Zone zone = getZoneFor(nn);
 		if( zone == null &&  isCommon(nn) ) {
 			zone = getDefaultZone();
-		} 
-
-
+		}
 		if( zone != null ) {
 			ret = new A(name);
 			ret.setAddress(addr);
 			ret.setTTL(zone.getSoa().getTTL());
-			putDynamic(ret);
 		}
-
 		return ret;
 	}
 
@@ -1842,6 +2074,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	public boolean stopAndWait(long timeoutMs) throws InterruptedException {
 		long deadline = System.currentTimeMillis()+timeoutMs;
 		stop();
+		closeDbConnection();
 		java.net.DatagramSocket udp = UDPProsessor.getSock();
 		if( udp != null ) {
 			udp.close();
@@ -1867,17 +2100,26 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		return ret;
 	}
 
+	/**
+	 * Remove a dynamic entry: the store first, then memory. (Memory used to
+	 * go first; if the database write failed the entry was gone until the
+	 * next database reload brought it back.)
+	 */
 	public void removeDynamic(String name) throws IOException  {
-		List<A> list = dynamic.remove(dynamicKey(name));
-
-		if( list != null) {
-			A a = list.get(0);
+		synchronized (dynamicLock) {
+			List<A> list = getDynamic(name);
+			if( list == null) {
+				return;
+			}
 			try {
-				saveDynamic(name,a.getAddressString(),STATUS_DELETED);
+				saveDynamic(name,list.get(0).getAddressString(),STATUS_DELETED);
 			} catch (ClassNotFoundException | SQLException e) {
 				throw new IOException(e);
 			}
+			Map<String, List<A>> after = new HashMap<String, List<A>>(dynamic);
+			after.remove(dynamicKey(name));
+			storeDynamicFile(after);
+			dynamic.remove(dynamicKey(name));
 		}
-
 	}
 }

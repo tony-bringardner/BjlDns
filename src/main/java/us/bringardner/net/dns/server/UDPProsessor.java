@@ -36,6 +36,7 @@ import java.net.InetAddress;
 import us.bringardner.net.dns.ByteBuffer;
 import us.bringardner.net.dns.DNS;
 import us.bringardner.net.dns.DnsFormatException;
+import us.bringardner.net.dns.Edns;
 import us.bringardner.net.dns.Message;
 import us.bringardner.net.dns.resolve.QueryData;
 /**
@@ -67,6 +68,17 @@ public class UDPProsessor extends DnsRequestProcessor implements Runnable
 
 	public static void setMaxResponseSize(int size) {
 		maxResponseSize = Math.max(DNS.MAX_UDP_PAYLOAD, size);
+	}
+
+	/**
+	 * Largest UDP response for a request: the EDNS size (client's size, at
+	 * most JDns.ednsUdpSize) when it sent an OPT, otherwise maxResponseSize.
+	 */
+	public static int udpLimit(Edns.Request edns) {
+		if( edns != null && edns.isPresent() ) {
+			return edns.maxUdpResponse();
+		}
+		return maxResponseSize;
 	}
 	public static PrintStream dumpBuf;
 	
@@ -126,8 +138,14 @@ public void run ()
 		
 		try {
 
-			data = new byte[MAXUDPLEN];
-			recPckt = new DatagramPacket(data,data.length);
+			//  One receive buffer per thread (the request is copied out
+			//  before parsing); it used to allocate 2 KB per packet
+			if( recPckt == null ) {
+				data = new byte[MAXUDPLEN];
+				recPckt = new DatagramPacket(data,data.length);
+			} else {
+				recPckt.setLength(data.length);
+			}
 
 			// Get control
 			setState("Running before sync");			
@@ -141,22 +159,28 @@ public void run ()
 				} else {
 					doit = false;
 				}
-				setState("Running after sock.rec doit="+doit);
+				setState(doit ? "Running after sock.rec doit=true" : "Running after sock.rec doit=false");
 			}
 		} catch(InterruptedIOException ex) {
 			//  Timed out
 			doit = false;
-			setState("Running Timeout doit="+doit);
+			setState("Running Timeout doit=false");
 		} catch(Exception ex) {
 			//log("Exception in UDP sock.receive(recPckt)",ex);
 			doit = false;
-			setState("Running Error doit="+doit);
+			setState("Running Error doit=false");
+			if( sock.isClosed() ) {
+				//  Nothing more will arrive; this used to spin in a tight
+				//  loop (receive fails at once) until the shutdown flag was set
+				setState("Running socket closed");
+				break;
+			}
 		}
 
 		ByteBuffer buf = null;
 		if( doit ) {
 			try {
-				setState("Running Begin processing doit="+doit);
+				setState("Running Begin processing doit=true");
 				
 				client = recPckt.getAddress();
 				port = recPckt.getPort();
@@ -246,7 +270,7 @@ public void sendResponse(Message msg)
 	if( msg != null ) {
 		//  Fit the response into maxResponseSize (drops additional records,
 		//  or sets TC so the client retries over TCP)
-		byte [] data = msg.toByteArray(maxResponseSize);
+		byte [] data = msg.toByteArray(udpLimit(currentEdns));
 		int dataSize = data.length;
 		setState("SendResponse getPacket");
 		DatagramPacket pckt = new DatagramPacket(data,dataSize,client,port);

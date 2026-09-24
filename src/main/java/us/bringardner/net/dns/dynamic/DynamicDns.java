@@ -109,7 +109,7 @@ public class DynamicDns extends DnsBaseClass {
 	}
 
 	private Connection getDynDnsConnection() throws ClassNotFoundException, SQLException {
-		String driver = System.getProperty(PROP_DYNAMIC_DRIVER,"org.gjt.mm.mysql.Driver");
+		String driver = System.getProperty(PROP_DYNAMIC_DRIVER,"com.mysql.cj.jdbc.Driver");  // was org.gjt.mm.mysql.Driver, removed in Connector/J 8
 		String url = System.getProperty(PROP_DYNAMIC_URL,"jdbc:mysql://mail.bringardner.us:3306/email");
 		String user = System.getProperty(PROP_DYNAMIC_USER,"tony");
 		String password = System.getProperty(PROP_DYNAMIC_PASSWORD,"0000");

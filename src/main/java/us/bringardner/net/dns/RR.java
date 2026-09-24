@@ -220,10 +220,19 @@ public  class RR extends Section
 			}
 		}
 
-		super.toByteArray(buf); 
-
+		super.toByteArray(buf);
 		buf.setInt(ttl);
-		buf.markPos(rdlength);
+		if( getClass() == RR.class ) {
+			//  Generic record (a type this library has no class for, e.g. CAA,
+			//  SRV, DS): the rdata is opaque, write it as received. Subclasses
+			//  write their own rdata after this method; the generic RR used to
+			//  write only the length, producing a corrupt message.
+			byte [] data = rdata == null ? new byte[0] : rdata;
+			buf.markPos(data.length);
+			buf.setBytes(data);
+		} else {
+			buf.markPos(rdlength);
+		}
 	}
 	
 	public  String toString() { 

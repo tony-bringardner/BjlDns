@@ -37,6 +37,8 @@ import us.bringardner.net.dns.resolve.QueryData;
 public abstract class DnsRequestProcessor  extends DnsBaseClass implements DNS
 {
 	DnsServer server;
+	//  EDNS of the request being processed (process() runs one at a time per processor)
+	protected Edns.Request currentEdns = Edns.Request.NONE;
 /**
  * Process an incoming request (Search for the query then call sendResponse).
  **/
@@ -45,10 +47,20 @@ public abstract class DnsRequestProcessor  extends DnsBaseClass implements DNS
 	//  cache, retried, and finally called System.exit(1) from this thread.
 	//  Caches are bounded now; a JVM error propagates to FatalErrorHandler.
 	setState("Processing Message begin");
-	List<Message> reply = server.query(query);
-	if( reply != null ) {
-		for(Message m : reply) {
-			sendResponse(m);
+	Edns.Request edns = query.getEdns();
+	currentEdns = edns;
+	if( edns.isMalformed() ) {
+		//  RFC 6891 6.1.1: more than one OPT (or a bad one) is FORMERR
+		sendResponse(Edns.formatError(query.getMessage()));
+	} else if( edns.isBadVersion() ) {
+		sendResponse(Edns.badVersion(query.getMessage()));
+	} else {
+		List<Message> reply = server.query(query);
+		if( reply != null ) {
+			for(Message m : reply) {
+				Edns.applyToResponse(m, edns);
+				sendResponse(m);
+			}
 		}
 	}
 	setState("Processing Message Complete");

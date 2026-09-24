@@ -33,6 +33,7 @@ import us.bringardner.net.dns.A;
 import us.bringardner.net.dns.DNS;
 import us.bringardner.net.dns.DnsBaseClass;
 import us.bringardner.net.dns.Message;
+import us.bringardner.net.dns.RR;
 import us.bringardner.net.dns.Section;
 
 /**
@@ -75,10 +76,61 @@ public class ServerA  extends DnsBaseClass
 		setName(n);
 		if( addr != null ) {
 			setAddress(addr);
-		} else {
-			log("No address for "+name+", looking up by name");
-			setAddress(n);
 		}
+		//  else: a name server without glue. Its address is looked up through
+		//  our own resolver when it is first queried (lookupAddress). It used
+		//  to be InetAddress.getByName(name) right here: a blocking OS lookup
+		//  in the resolver thread that could even query this server.
+	}
+
+	/** Most glueless name server lookups nested inside each other (per thread). */
+	static final int MAX_GLUE_DEPTH = 3;
+	//  Names whose address this thread is looking up (loop guard)
+	private static final ThreadLocal<java.util.Set<String>> lookingUp =
+			ThreadLocal.withInitial(java.util.HashSet::new);
+
+	/**
+	 * Find the address of a name server that came without glue, through the
+	 * Resolver (cache, validated upstream queries). A lookup that needs itself
+	 * (e.g. ns.example.com for example.com with no glue) or is nested deeper
+	 * than MAX_GLUE_DEPTH gives up instead of recursing.
+	 * 
+	 * @return the address, or null if it can't be found
+	 */
+	private InetAddress lookupAddress() {
+		String n = name;
+		if( n == null ) {
+			return null;
+		}
+		java.util.Set<String> busy = lookingUp.get();
+		String key = n.toLowerCase();
+		if( busy.contains(key) || busy.size() >= MAX_GLUE_DEPTH ) {
+			return null;
+		}
+		busy.add(key);
+		try {
+			Message m = Resolver.resolve(new Section(n, DNS.A, DNS.IN));
+			if( m != null ) {
+				for(RR rr : m.getAnswer()) {
+					if( rr instanceof A ) {
+						//  From the address bytes: no DNS lookup
+						InetAddress a = InetAddress.getByAddress(n, ((A)rr).getAddress());
+						addrStr = a.getHostAddress();
+						addr = a;
+						return a;
+					}
+				}
+			}
+		} catch(Exception ex) {
+			log("Could not look up name server "+n+": "+ex);
+		} finally {
+			busy.remove(key);
+		}
+		return null;
+	}
+
+	public String getName() {
+		return name;
 	}
 	
 	/**
@@ -127,13 +179,53 @@ public class ServerA  extends DnsBaseClass
 	 * @return the response, or null if the server is inactive, has no
 	 * address, or did not answer.
 	 */
+	/** Shortest timeout used for a server whose response time is known (ms). */
+	public static int MIN_QUERY_TIMEOUT = 300;
+	/** Smoothed response time in ms (EWMA, 1/8 weight), 0 if never answered. */
+	private volatile double srtt = 0;
+
+	/** Smoothed response time (ms); 0 if this server has never answered. */
+	public long getSrtt() {
+		return Math.round(srtt);
+	}
+
+	/** Record a response time (or a failure penalty) in the smoothed average. */
+	private synchronized void recordRtt(long ms) {
+		srtt = srtt == 0 ? ms : (7*srtt + ms) / 8;
+	}
+
+	/**
+	 * Timeout for the next query: about twice the smoothed response time
+	 * (MIN_QUERY_TIMEOUT..QUERY_TIMEOUT) once it is known, QUERY_TIMEOUT
+	 * before that, never more than 'remaining'.
+	 */
+	public int timeoutFor(long remaining) {
+		long t = srtt > 0 ? Math.max(MIN_QUERY_TIMEOUT, Math.min(QUERY_TIMEOUT, Math.round(srtt*2)+100)) : QUERY_TIMEOUT;
+		return (int)Math.max(1, Math.min(t, remaining));
+	}
+
 	public Message query(Section q) {
+		return query(q, QUERY_TIMEOUT);
+	}
+
+	/**
+	 * Send a query to this server, waiting at most timeoutMs per attempt.
+	 * @return the response, or null (inactive, no address, no answer)
+	 */
+	public Message query(Section q, int timeoutMs) {
 		if( !isActive() ) {
 			return null;
 		}
 
 		InetAddress server = addr;
 		if ( server == null ) {
+			server = lookupAddress();
+		}
+		if ( server == null ) {
+			//  Unknown address counts as a failure (deactivates after MAX_TRIES)
+			if( consecutiveFailures.incrementAndGet() > MAX_TRIES ) {
+				inactiveUntil = System.currentTimeMillis()+DEACTIVATE;
+			}
 			return null;
 		}
 
@@ -144,7 +236,7 @@ public class ServerA  extends DnsBaseClass
 		qm.setServer(server);
 		qm.setPort(port);
 		qm.setQuestion(q);
-		qm.setTimeOut(QUERY_TIMEOUT);
+		qm.setTimeOut(Math.max(1, timeoutMs));
 		qm.setRetry(QUERY_RETRY);
 
 		long start = System.currentTimeMillis();
@@ -158,13 +250,16 @@ public class ServerA  extends DnsBaseClass
 			//  Timeout or I/O error, counted as a failure below
 		}
 
-		totResp.addAndGet(System.currentTimeMillis()-start);
-
+		long rtt = System.currentTimeMillis()-start;
+		totResp.addAndGet(rtt);
 		if( ret != null ) {
 			msgRec.incrementAndGet();
+			recordRtt(Math.max(1, rtt));
 			consecutiveFailures.set(0);
 			inactiveUntil = 0;
 		} else {
+			//  A timeout counts as a slow answer so the server sorts behind responsive ones
+			recordRtt(Math.max(rtt, QUERY_TIMEOUT) * 2L);
 			if( consecutiveFailures.incrementAndGet() > MAX_TRIES ) {
 				inactiveUntil = System.currentTimeMillis()+DEACTIVATE;
 			}

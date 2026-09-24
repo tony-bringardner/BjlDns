@@ -85,6 +85,34 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 		return ret;
 	}
 
+	/** How often backlogFullWarning() returns a message. */
+	static final long FULL_WARNING_INTERVAL_MS = 10_000;
+	private static final java.util.concurrent.atomic.AtomicLong lastFullWarning = new java.util.concurrent.atomic.AtomicLong();
+	private static final java.util.concurrent.atomic.AtomicLong droppedAtLastWarning = new java.util.concurrent.atomic.AtomicLong();
+
+	/**
+	 * Call after addQuery returned false. Returns a message to log at most
+	 * once every 10 seconds (with the number of queries turned away since the
+	 * last one), otherwise null. Under overload the server used to log an
+	 * error for every query it could not queue.
+	 */
+	/** Test hook: the next backlogFullWarning() returns a message. */
+	static void resetBacklogWarning() {
+		lastFullWarning.set(0);
+	}
+
+	public static String backlogFullWarning() {
+		long now = System.currentTimeMillis();
+		long last = lastFullWarning.get();
+		if( now - last < FULL_WARNING_INTERVAL_MS || !lastFullWarning.compareAndSet(last, now) ) {
+			return null;
+		}
+		long total = dropped.get();
+		long since = total - droppedAtLastWarning.getAndSet(total);
+		return "Resolver backlog full (capacity "+getMaxBackLog()+", "+PROP_RESOLVER_BACKLOG+"): "
+				+since+" queries answered without recursion since the last warning, "+total+" in total";
+	}
+
 	/** Discard all queued queries. @return how many were removed */
 	public static int clearBacklog() {
 		int n = 0;
@@ -183,8 +211,14 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 		return fifo.getCapacity();
 	}
 	
+	/**
+	 * Default for Resolver.maxBacklog. It was 20: a short burst of cache
+	 * misses (e.g. a page load that looks up 30 names) already overflowed it.
+	 */
+	public static final int DEFAULT_MAX_BACKLOG = 200;
+
 	private static void initResolverThread() {
-		int maxBacklog = 20;
+		int maxBacklog = DEFAULT_MAX_BACKLOG;
 
 		String tmp = System.getProperty(PROP_RESOLVER_BACKLOG);
 
@@ -221,7 +255,7 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 				QueryData question = (QueryData)fifo.remove();
 				setState("Returned on fifo");
 				if( running && question != null ) {
-					setState("Call Resolver:"+question);
+					setState("Call Resolver", question);
 					Message msg = null;
 					Section toResolve = question.getResolveQuestion();
 					try {
@@ -274,7 +308,9 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 
 			//  The old code cut the byte array at MAXUDPLEN (a corrupt packet
 			//  ending mid-record) and set TC on the shared message.
-			byte [] data = msg.toByteArray(us.bringardner.net.dns.server.UDPProsessor.getMaxResponseSize());
+			//  EDNS: drop an upstream OPT, echo ours if the client sent one
+			us.bringardner.net.dns.Edns.applyToResponse(msg, query.getEdns());
+			byte [] data = msg.toByteArray(us.bringardner.net.dns.server.UDPProsessor.udpLimit(query.getEdns()));
 			int dataSize = data.length;
 
 			setState("SendResponse getPacket");

@@ -70,6 +70,9 @@ public class Resolver  extends DnsBaseClass
 	//private static int current=0;
 	//private static int sbeltSize;
 	public static final String PROP_MAX_DELEGATIONS = "JDns.maxDelegations";
+	/** Total time (ms) for one resolution, including referrals and CNAME hops (default 4000). */
+	public static final String PROP_RESOLVE_TIMEOUT = "JDns.resolveTimeout";
+	private static volatile long resolveTimeout = 4000;
 	/** seconds, default 10800 (3 hours) */
 	public static final String PROP_MAX_NEGATIVE_TTL = "JDns.maxNegativeTtl";
 	public static final String PROP_DELEGATION_MAX_AGE = "JDns.delegationMaxAge";
@@ -357,6 +360,13 @@ public class Resolver  extends DnsBaseClass
 				new Resolver().logError("Error setting "+PROP_MAX_NEGATIVE_TTL,ex);
 			}
 		}
+		if( (tmp=prop.getProperty(PROP_RESOLVE_TIMEOUT)) != null ) {
+			try {
+				setResolveTimeout(Long.parseLong(tmp.trim()));
+			} catch(Exception ex) {
+				new Resolver().logError("Error setting "+PROP_RESOLVE_TIMEOUT,ex);
+			}
+		}
 		if( (tmp=prop.getProperty(PROP_MAX_DELEGATIONS)) != null ) {
 			try {
 				setMaxDelegations(Integer.parseInt(tmp.trim()));
@@ -493,7 +503,10 @@ public class Resolver  extends DnsBaseClass
 		incStart();
 		long time = System.currentTimeMillis();
 
-		Message ret = resolveChain(question, new HashSet<String>(), 0);
+		//  One deadline for the whole resolution: referrals and CNAME hops used
+		//  to start a fresh 4 s each
+		long deadline = System.currentTimeMillis() + resolveTimeout;
+		Message ret = resolveChain(question, new HashSet<String>(), 0, deadline);
 
 		incComplted((int)(System.currentTimeMillis()-time),question);
 
@@ -510,13 +523,13 @@ public class Resolver  extends DnsBaseClass
 	 * @param seen lower case names already visited in this chain
 	 * @param depth number of CNAMEs followed so far
 	 */
-	private static Message resolveChain(Section question, Set<String> seen, int depth) {
+	private static Message resolveChain(Section question, Set<String> seen, int depth, long deadline) {
 		seen.add(question.getName().toLowerCase());
 
 		Message ret = cache.get(question);
 		if( ret == null ) {
 			//  Nothing in cache, search for it
-			if( (ret=resolve(question, getServers(question))) != null ) {
+			if( (ret=resolve(question, getServers(question), deadline)) != null ) {
 				cache.put(ret);						
 			}
 		}
@@ -533,7 +546,7 @@ public class Resolver  extends DnsBaseClass
 							+" (followed "+depth+"), returning the chain so far");
 					return ret;
 				}
-				Message ret2 = resolveChain(new Section(target,question.getType(),question.getDnsClass()), seen, depth+1);
+				Message ret2 = resolveChain(new Section(target,question.getType(),question.getDnsClass()), seen, depth+1, deadline);
 				if( ret2 == null ) {
 					ret = ret2;
 				} else {
@@ -549,18 +562,33 @@ public class Resolver  extends DnsBaseClass
 		return ret;
 	}
 
+	public static long getResolveTimeout() {
+		return resolveTimeout;
+	}
+
+	/** @param ms total time for one resolution, including referrals and CNAME hops */
+	public static void setResolveTimeout(long ms) {
+		resolveTimeout = Math.max(1, ms);
+	}
+
+	/** For tests: set the root ('safety belt') servers. */
+	static void setRootServersForTests(List<RemoteServer> list) {
+		sbelt.clear();
+		sbelt.addAll(list);
+	}
+
 	/** For tests: the live cache. */
 	static Cache getCache() {
 		return cache;
 	}
 
-	private static Message resolve(Section question, List<RemoteServer> slist) {
+	private static Message resolve(Section question, List<RemoteServer> slist, long deadline) {
 
 		Message ret = null;
 		//  OK Loop through each server in the slist until we get a response
 		RemoteServer svr = null;
 
-		long maxTime = System.currentTimeMillis()+4000;
+		long maxTime = deadline;
 		for(int idx=0,sz=slist.size(); idx < sz; idx++ ) {
 			svr = slist.get(idx);
 			if( svr.isActive() ) {
@@ -588,7 +616,7 @@ public class Resolver  extends DnsBaseClass
 							// and use them instead.
 							slist = Collections.singletonList(use);
 							//TODO:  Major testing here
-							return resolve(question,slist);
+							return resolve(question,slist,deadline);
 						}
 
 					}
