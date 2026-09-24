@@ -274,7 +274,9 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 
 			//  The old code cut the byte array at MAXUDPLEN (a corrupt packet
 			//  ending mid-record) and set TC on the shared message.
-			byte [] data = msg.toByteArray(us.bringardner.net.dns.server.UDPProsessor.getMaxResponseSize());
+			//  EDNS: drop an upstream OPT, echo ours if the client sent one
+			us.bringardner.net.dns.Edns.applyToResponse(msg, query.getEdns());
+			byte [] data = msg.toByteArray(us.bringardner.net.dns.server.UDPProsessor.udpLimit(query.getEdns()));
 			int dataSize = data.length;
 
 			setState("SendResponse getPacket");

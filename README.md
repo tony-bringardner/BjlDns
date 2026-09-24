@@ -54,7 +54,8 @@ Set in the properties file (`JDns.properties`) or with `-D`. Besides the existin
 |---|---|---|
 | `JDns.udpTimeout` / `JDns.tcpTimeout` | `JDns.timeout` (5000) | Socket timeouts (ms); how often listeners check for shutdown |
 | `JDns.tcpBindAddress` / `JDns.udp.bindAddress` | `JDns.bindAddress` | Per-protocol listen address |
-| `JDns.udpMaxResponse` | 512 | Largest UDP response (bytes); bigger answers are truncated (TC) and clients retry over TCP |
+| `JDns.udpMaxResponse` | 512 | Largest UDP response (bytes) to clients without EDNS; bigger answers are truncated (TC) and clients retry over TCP |
+| `JDns.ednsUdpSize` | 1232 | Largest UDP response to EDNS clients (512–4096; the client's own size is used if smaller). Responses echo an OPT record; EDNS versions other than 0 get BADVERS |
 | `JDns.tcpMaxConnections` | 64 | TCP connections served at once; more are closed immediately |
 | `JDns.tcpIdleTimeout` | 10000 | An idle TCP connection is closed after this many ms |
 | `JDns.maxCacheEntries` | 10000 | Resolver cache size (LRU) |

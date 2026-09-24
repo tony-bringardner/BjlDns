@@ -36,6 +36,7 @@ import java.net.InetAddress;
 import us.bringardner.net.dns.ByteBuffer;
 import us.bringardner.net.dns.DNS;
 import us.bringardner.net.dns.DnsFormatException;
+import us.bringardner.net.dns.Edns;
 import us.bringardner.net.dns.Message;
 import us.bringardner.net.dns.resolve.QueryData;
 /**
@@ -67,6 +68,17 @@ public class UDPProsessor extends DnsRequestProcessor implements Runnable
 
 	public static void setMaxResponseSize(int size) {
 		maxResponseSize = Math.max(DNS.MAX_UDP_PAYLOAD, size);
+	}
+
+	/**
+	 * Largest UDP response for a request: the EDNS size (client's size, at
+	 * most JDns.ednsUdpSize) when it sent an OPT, otherwise maxResponseSize.
+	 */
+	public static int udpLimit(Edns.Request edns) {
+		if( edns != null && edns.isPresent() ) {
+			return edns.maxUdpResponse();
+		}
+		return maxResponseSize;
 	}
 	public static PrintStream dumpBuf;
 	
@@ -246,7 +258,7 @@ public void sendResponse(Message msg)
 	if( msg != null ) {
 		//  Fit the response into maxResponseSize (drops additional records,
 		//  or sets TC so the client retries over TCP)
-		byte [] data = msg.toByteArray(maxResponseSize);
+		byte [] data = msg.toByteArray(udpLimit(currentEdns));
 		int dataSize = data.length;
 		setState("SendResponse getPacket");
 		DatagramPacket pckt = new DatagramPacket(data,dataSize,client,port);

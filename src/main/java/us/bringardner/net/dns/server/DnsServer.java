@@ -63,6 +63,7 @@ import us.bringardner.net.dns.A;
 import us.bringardner.net.dns.Cname;
 import us.bringardner.net.dns.DNS;
 import us.bringardner.net.dns.DnsBaseClass;
+import us.bringardner.net.dns.Edns;
 import us.bringardner.net.dns.Header;
 import us.bringardner.net.dns.Message;
 import us.bringardner.net.dns.Mx;
@@ -97,6 +98,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	public static final String PROP_UDP_TIMEOUT = "JDns.udpTimeout";
 	/** Largest UDP response in bytes (default 512, RFC 1035). Larger answers are truncated. */
 	public static final String PROP_UDP_MAX_RESPONSE = "JDns.udpMaxResponse";
+	public static final String PROP_EDNS_UDP_SIZE = "JDns.ednsUdpSize";
 
 	public static final String PROP_TCP_PORT = "JDns.tcpPort";	
 	public static final String PROP_TCP_BIND_ADDRESS = "JDns.tcpBindAddress";
@@ -440,6 +442,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		//  setting the UDP one, so it changed the TCP timeout and not UDP's)
 		int udpTimeout = intProperty(PROP_UDP_TIMEOUT, alltimeout);
 		UDPProsessor.setMaxResponseSize(intProperty(PROP_UDP_MAX_RESPONSE, UDPProsessor.getMaxResponseSize()));
+		Edns.setServerUdpSize(intProperty(PROP_EDNS_UDP_SIZE, Edns.DEFAULT_UDP_SIZE));
 
 		UDPProcs = new UDPProsessor[UDPProcCount];
 		Thread t = null;

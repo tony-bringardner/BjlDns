@@ -27,6 +27,7 @@ package us.bringardner.net.dns.resolve;
 
 import java.net.InetAddress;
 
+import us.bringardner.net.dns.Edns;
 import us.bringardner.net.dns.Message;
 import us.bringardner.net.dns.Section;
 
@@ -42,6 +43,7 @@ public class QueryData
 	private int port;
 	private Message msg;
 	private Section question;
+	private volatile Edns.Request edns;
 	
 /**
  * QueryData constructor comment.
@@ -60,6 +62,19 @@ public QueryData(InetAddress myClient, int myPort, Message myQuestion)
 	question = (Section)msg.getQuestion().get(0);
 	
 	
+}
+/**
+ * Insert the method's description here.
+ * Creation date: (10/16/2003 7:29:26 AM)
+ * @return java.net.InetAddress
+ */
+public Edns.Request getEdns() {
+	Edns.Request ret = edns;
+	if( ret == null ) {
+		ret = Edns.parse(msg);
+		edns = ret;
+	}
+	return ret;
 }
 /**
  * Insert the method's description here.

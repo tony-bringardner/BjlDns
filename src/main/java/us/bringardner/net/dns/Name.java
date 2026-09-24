@@ -306,6 +306,11 @@ public class Name implements DNS
 		if( n.endsWith(".") ) {
 			n = n.substring(0,n.length()-1);
 		}
+		if( n.isEmpty() ) {
+			//  "" or "." is the root: no labels, one zero octet on the wire
+			//  (it used to become one empty label, i.e. two zero octets)
+			return;
+		}
 		int idx = n.indexOf(".");
 
 		while(idx > 0 && idx < n.length()) {
