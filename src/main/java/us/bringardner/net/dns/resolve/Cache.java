@@ -111,7 +111,9 @@ public class Cache extends DnsBaseClass
 	private final LinkedHashMap<String, Entry> cache = new LinkedHashMap<String, Entry>(64, 0.75f, true) {
 		private static final long serialVersionUID = 1L;
 		@Override
-		protected boolean removeEldestEntry(Map.Entry<String, Entry> eldest) {
+		//  Cache.Entry, qualified: inside this LinkedHashMap subclass a plain
+		//  'Entry' means LinkedHashMap.Entry when compiling against Java 11
+		protected boolean removeEldestEntry(Map.Entry<String, Cache.Entry> eldest) {
 			return size() > maxEntries;
 		}
 	};
