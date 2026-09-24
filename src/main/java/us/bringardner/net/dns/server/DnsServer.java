@@ -47,6 +47,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -138,9 +139,30 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	//  Directory where all DNS info is stored
 	private File dnsDir;
 
+	/**
+	 * Immutable snapshot of the zones being served. Queries read one snapshot;
+	 * a reload builds a complete new one and publishes it in a single volatile
+	 * write, so a query never sees a half-loaded (or empty) set of zones.
+	 */
+	private static final class ZoneSet {
+		static final ZoneSet EMPTY = new ZoneSet(Collections.<String,Zone>emptyMap(), null, Collections.<String,Zone>emptyMap());
+		/** lower case zone name -> zone (unmodifiable) */
+		final Map<String, Zone> zones;
+		final Zone defaultZone;
+		/** zone file name -> zone loaded from it (unmodifiable) */
+		final Map<String, Zone> byFile;
+
+		ZoneSet(Map<String, Zone> zones, Zone defaultZone, Map<String, Zone> byFile) {
+			this.zones = zones;
+			this.defaultZone = defaultZone;
+			this.byFile = byFile;
+		}
+	}
+
 	// This information applies to all auth zones unless otherwise defined
-	private Map<String, Zone> zones = new HashMap<String, Zone>();
-	private Zone defaultZone;
+	private volatile ZoneSet zoneSet = ZoneSet.EMPTY;
+	//  zone file name -> lastModified, as seen by the last load attempt (successful or not)
+	private volatile Map<String, Long> lastSeenZoneFiles = null;
 
 
 	// These servers are used to forward requests
@@ -187,10 +209,11 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	/*
 	 * Add a new Zone to the global data
 	 */
-	public void addZone(Zone zone) {
-
-		zones.put(zone.getName().toLowerCase(),zone);	
-
+	public synchronized void addZone(Zone zone) {
+		ZoneSet cur = zoneSet;
+		Map<String, Zone> zones = new HashMap<String, Zone>(cur.zones);
+		zones.put(zone.getName().toLowerCase(),zone);
+		zoneSet = new ZoneSet(Collections.unmodifiableMap(zones), cur.defaultZone, cur.byFile);
 	}
 
 
@@ -275,7 +298,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 **/
 	public Zone getZone(String zoneName) {
 
-		Zone ret = (Zone)zones.get(zoneName.toLowerCase());
+		Zone ret = zoneSet.zones.get(zoneName.toLowerCase());
 
 
 		return ret;
@@ -300,7 +323,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * Find the closest Zone that matches this Question (Section)
 	 **/
 	public Map<String, Zone> getZones() {
-		return zones;
+		//  unmodifiable snapshot
+		return zoneSet.zones;
 	}
 
 	/**
@@ -828,86 +852,117 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		return ret;
 	}
 
-	boolean shouldReloadZones() {
-		boolean ret = false;
-		if( zoneDir == null ) {
-			ret = true;
-		} else {
-			File[] list = getZoneFiles();
-			if( list == null || list.length != zones.size()) {
-				ret = true;
-			} else {
-				//  put them in a map;
-				Map<String,File> map = new HashMap<>();
-				for(File file : list) {
-					map.put(file.getName(), file);					
-				}
-				for(Zone z : zones.values()) {
-					File f = z.getMasterFile();
-					File f2 = map.get(f.getName());
-					if( f== null || f2 == null ) {
-						ret = true;
-						break;
-					} else {
-						if(f2.lastModified() != z.getLastModified() ) {
-							ret = true;
-							break;							
-						}
-					}					
-				}			
+	/** Zone file name -> lastModified for the zone files in zoneDir now. */
+	private Map<String, Long> currentZoneFiles() {
+		Map<String, Long> ret = new HashMap<String, Long>();
+		File [] list = zoneDir == null ? null : getZoneFiles();
+		if( list != null ) {
+			for(File f : list) {
+				ret.put(f.getName(), f.lastModified());
 			}
 		}
 		return ret;
 	}
 
 	/**
-	 * Initialize the server from properties
+	 * @return true if a zone file was added, removed or modified since the last
+	 * load attempt. A file that failed to load does not cause another reload
+	 * until it changes (it used to trigger a full reload every admin cycle).
 	 */
+	boolean shouldReloadZones() {
+		Map<String, Long> seen = lastSeenZoneFiles;
+		if( zoneDir == null || seen == null ) {
+			return true;
+		}
+		return !currentZoneFiles().equals(seen);
+	}
 
-	private void loadZones() throws IOException {
-
+	/**
+	 * Load (or reload) all zones from zoneDir and publish them atomically.
+	 * <ul>
+	 * <li>Files whose timestamp has not changed reuse the Zone already loaded.</li>
+	 * <li>If a changed file fails to parse, the previous version of that zone
+	 *     is kept (logged); a new file that fails is skipped (logged).</li>
+	 * <li>If the default zone can't be found the new set is not published:
+	 *     the server keeps serving the previous zones and an IOException is thrown.</li>
+	 * </ul>
+	 */
+	synchronized void loadZones() throws IOException {
 		String dirName = getProperty(PROP_ZONE_DIR,"zones");
-
-
 		log("Loading zonez "+PROP_ZONE_DIR+"= "+dirName);
-
 		zoneDir = new File(dirName).getCanonicalFile();
 
-
-		if( !zoneDir.exists() ) {
-			throw new IOException(PROP_ZONE_DIR+" ="+zoneDir+" does not exist!!! exiting from "+getClass().getName());
-		}
-
-		File [] list = getZoneFiles(); 
-		if( list == null || list.length == 0 ) {
-			throw new IOException("Can't find zone file! Must have at lease a default Zone.  seraching in ("+zoneDir+") exiting from "+getClass().getName());			
-		}
-
-		defaultZoneName = getProperty(PROP_DEFAULT_ZONE,null);
-
-		log(PROP_DEFAULT_ZONE+"= "+defaultZoneName);
-		if( defaultZoneName == null || (defaultZoneName=defaultZoneName.trim()).isEmpty()) {
-			throw new IOException("Manditory property, "+PROP_DEFAULT_ZONE+" is not defined");
-		}
-
-		zones = new HashMap<String, Zone>();
-		for( int i=0; i< list.length; i++ ) {
-			try {
-				Zone z = new Zone(list[i]);
-				addZone(z);
-				log("Adding Zone "+z.getName());
-			} catch (Throwable e) {
-				logError("Error loading zone from "+list[i],e);
+		Map<String, Long> seen = new HashMap<String, Long>();
+		try {
+			if( !zoneDir.exists() ) {
+				throw new IOException(PROP_ZONE_DIR+" ="+zoneDir+" does not exist!!! exiting from "+getClass().getName());
 			}
-		}
-		if( (defaultZone=getZone(defaultZoneName)) == null ) {
-			logError("Can't find default zone '"+defaultZoneName+"'! Must have at lease a default.  seraching in ("+zoneDir+")");
-			throw new IOException("use '"+PROP_ZONE_DIR+"' or '"+PROP_DEFAULT_ZONE+"' to set correctly");			
+			File [] list = getZoneFiles(); 
+			if( list == null || list.length == 0 ) {
+				throw new IOException("Can't find zone file! Must have at lease a default Zone.  seraching in ("+zoneDir+") exiting from "+getClass().getName());			
+			}
+			defaultZoneName = getProperty(PROP_DEFAULT_ZONE,null);
+			log(PROP_DEFAULT_ZONE+"= "+defaultZoneName);
+			if( defaultZoneName == null || (defaultZoneName=defaultZoneName.trim()).isEmpty()) {
+				throw new IOException("Manditory property, "+PROP_DEFAULT_ZONE+" is not defined");
+			}
+
+			ZoneSet old = zoneSet;
+			Map<String, Long> oldSeen = lastSeenZoneFiles;
+			Map<String, Zone> zones = new HashMap<String, Zone>();
+			Map<String, Zone> byFile = new HashMap<String, Zone>();
+
+			for(File file : list) {
+				String fileName = file.getName();
+				//  Read the timestamp before the file so an edit made while we
+				//  read it triggers another reload.
+				long modified = file.lastModified();
+				seen.put(fileName, modified);
+
+				Zone prev = old.byFile.get(fileName);
+				Long prevModified = oldSeen == null ? null : oldSeen.get(fileName);
+				Zone z = null;
+				if( prev != null && prevModified != null && prevModified.longValue() == modified ) {
+					z = prev;
+				} else {
+					try {
+						z = new Zone(file);
+						log("Adding Zone "+z.getName());
+					} catch (Throwable e) {
+						if( prev != null ) {
+							logError("Error loading zone from "+file+", still serving the previous version",e);
+							z = prev;
+						} else {
+							logError("Error loading zone from "+file,e);
+						}
+					}
+				}
+
+				if( z != null ) {
+					byFile.put(fileName, z);
+					Zone dup = zones.put(z.getName().toLowerCase(),z);
+					if( dup != null && dup != z ) {
+						logError("Zone "+z.getName()+" is defined by more than one file, using "+file);
+					}
+				}
+			}
+
+			Zone def = zones.get(defaultZoneName.toLowerCase());
+			if( def == null ) {
+				logError("Can't find default zone '"+defaultZoneName+"'! Must have at lease a default.  seraching in ("+zoneDir+")");
+				throw new IOException("use '"+PROP_ZONE_DIR+"' or '"+PROP_DEFAULT_ZONE+"' to set correctly");			
+			}
+
+			//  Publish everything at once
+			zoneSet = new ZoneSet(Collections.unmodifiableMap(zones), def, Collections.unmodifiableMap(byFile));
+		} finally {
+			//  Remember what we looked at, even on failure, so we only try again when something changes
+			lastSeenZoneFiles = seen;
 		}
 	}
 
 	public Zone getDefaultZone() {
-		return defaultZone;
+		return zoneSet.defaultZone;
 	}
 
 	/**
@@ -1152,7 +1207,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		Zone zone = getZone(question);
 		if( zone == null ) {
 			if( isCommon(question) ) {
-				zone = defaultZone;
+				zone = getDefaultZone();
 			}
 		}
 
