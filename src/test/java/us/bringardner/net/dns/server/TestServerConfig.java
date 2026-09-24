@@ -225,8 +225,8 @@ public class TestServerConfig {
 			// No JDBC URL: used to be a NullPointerException from a null Connection
 			SQLException ex = assertThrows(SQLException.class, () -> s.addOrUpdateDynamic("host.cfg.test","10.0.0.9"));
 			assertTrue(ex.getMessage().contains(DnsServer.PROP_JDBC_URL), ex.getMessage());
-			// the in-memory record is still served
-			assertEquals("10.0.0.9", s.getDynamic("host.cfg.test").get(0).getAddressString());
+			// nothing is served that the store didn't accept (rec #19)
+			assertTrue(s.getDynamic("host.cfg.test") == null);
 		});
 	}
 }
