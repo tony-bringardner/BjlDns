@@ -252,6 +252,8 @@ public class Resolver  extends DnsBaseClass
 				"\n Resolver capacity="+us.bringardner.net.dns.resolve.ResolverThread.getMaxBackLog()+
 				"  current="+us.bringardner.net.dns.resolve.ResolverThread.getBacklog()+
 				"\nResolver Stats: inflight="+(started-completed)+
+				" dropped(backlog full)="+ResolverThread.getDropped()+
+				" servfail="+ResolverThread.getFailed()+
 				" completed="+completed+
 				" min="+min+
 				" max="+max+

@@ -1491,14 +1491,22 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		Message ret = msg;
 
 
-		//  if the port == -1 then this is a TCP request and we won't support recursion
-		if( question.getPort() == -1 ) {
-			ret.setRecursiveAvailableOff();		
-		} else 	if( recursionAvailable && question.getMessage().isRecursiveDesired() ) {
+		if( recursionAvailable && question.getMessage().isRecursiveDesired() ) {
 			//  The resolver has the cache.  So it takes care of 4 & 5
 			question.getMessage().setAuthorityAnswerOff();
-			us.bringardner.net.dns.resolve.ResolverThread.addQuery(question);
-			ret = null;
+			if( question.getPort() == -1 ) {
+				//  TCP: resolve in this (TCP processor) thread. TCP used to get an
+				//  empty NOERROR answer, which since UDP truncation (rec #12) is
+				//  what a client got after retrying a large recursive answer.
+				ret = resolveNow(question);
+			} else if( us.bringardner.net.dns.resolve.ResolverThread.addQuery(question) ) {
+				//  A resolver thread will answer
+				ret = null;
+			} else {
+				//  Backlog full: say so now instead of dropping the query
+				logError("Resolver backlog full, SERVFAIL for "+question.getQuestion());
+				ret = us.bringardner.net.dns.resolve.ResolverThread.failure(question, DNS.SERVER_ERROR);
+			}
 		} else {
 			ret.setID(msg.getID());
 		}
@@ -1509,6 +1517,23 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 		return ret;
 
+	}
+
+	/**
+	 * Resolve a recursive query in the calling thread (used for TCP).
+	 * @return the answer, or SERVFAIL if it could not be resolved
+	 */
+	private Message resolveNow(QueryData question) {
+		Message ret = null;
+		try {
+			ret = Resolver.resolve(question.getQuestion());
+		} catch(RuntimeException | StackOverflowError ex) {
+			logError("Resolver failed for "+question.getQuestion(), ex);
+		}
+		if( ret == null ) {
+			ret = us.bringardner.net.dns.resolve.ResolverThread.failure(question, DNS.SERVER_ERROR);
+		}
+		return ret;
 	}
 
 	/*
