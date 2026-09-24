@@ -723,7 +723,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 	}
 
-	private void loadDynamic() {
+	void loadDynamic() {
 		try {
 			if( !loadDynamicFromDb()) {
 				dynamicFile = loadDynamicFromFile(false);
@@ -752,33 +752,66 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	}
 	 */
 
+	/**
+	 * Add or change a dynamic entry. The store (database, or the dynamic file
+	 * when there is no database) is written FIRST; memory changes only if that
+	 * succeeds, so a failed write leaves the old state everywhere. (Memory used
+	 * to change first: a failed write left the server answering with an
+	 * address the store didn't have.)
+	 * 
+	 * @throws SQLException if the database write fails (nothing is changed)
+	 */
 	public void addOrUpdateDynamic(String name, String ip) throws ClassNotFoundException, SQLException {
 		synchronized (dynamicLock) {
 			List<A> dyn = getDynamic(name);
 			if(dyn == null ) {
-				A a =	addDynamic(name, ip);
+				//  Validates the domain and the address; nothing is published yet
+				A a = buildDynamic(name, ip);
 				if( a == null ) {
 					logError("-Undefined domain for "+name);
 					return;
-				} else {
-					createDynamic(name,ip);
-					return;
 				}
+				createDynamic(name,ip);
+				storeDynamicFileOrThrow(withEntry(a));
+				putDynamic(a);
 			} else {
-				A a = dyn.get(0);
-				String old = a.getAddressString();
-				if( !ip.equals(old)) {
-					replaceDynamicAddress(a, ip);
+				A old = dyn.get(0);
+				A a = old;
+				if( !ip.equals(old.getAddressString())) {
+					a = copyWithAddress(old, ip);
+				}
+				//  Keep track of the last time we were contacted. If there is no
+				//  row (the entry came from the dynamic file), insert one.
+				if( saveDynamic(name,ip,STATUS_ACTIVE) == 0 ) {
+					createDynamic(name,ip);
+				}
+				if( a != old ) {
+					storeDynamicFileOrThrow(withEntry(a));
+					putDynamic(a);
 				}
 			}
 		}
-		// Keep track of the last time we were contacted
-		saveDynamic(name,ip,STATUS_ACTIVE);
-
-
 	}
 
-	private void saveDynamic(String name, String ip, String status) throws ClassNotFoundException, SQLException {
+	/** storeDynamicFile, with an I/O failure reported like a database failure. */
+	private void storeDynamicFileOrThrow(Map<String, List<A>> after) throws SQLException {
+		try {
+			storeDynamicFile(after);
+		} catch(IOException ex) {
+			throw new SQLException("Could not write the dynamic file: "+ex.getMessage(), ex);
+		}
+	}
+
+	/** The dynamic entries as they would be with a added or replaced. */
+	private Map<String, List<A>> withEntry(A a) {
+		Map<String, List<A>> ret = new HashMap<String, List<A>>(dynamic);
+		ret.put(dynamicKey(a.getName()), Collections.singletonList(a));
+		return ret;
+	}
+
+	/** @return rows updated, or -1 if no database is used */
+	private int saveDynamic(String name, String ip, String status) throws ClassNotFoundException, SQLException {
+		int ret = -1;
 		if( useDatabase()) {
 			Connection con = null;
 			PreparedStatement stmt = null;
@@ -790,8 +823,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				stmt.setString(POS_IP, ip);
 				stmt.setString(POS_STATUS, status);
 				stmt.setTimestamp(POS_LAST_UPDATE, new Timestamp(System.currentTimeMillis()));
-				stmt.executeUpdate();
-
+				ret = stmt.executeUpdate();
 			} finally {
 				if( stmt != null ) {
 					try { stmt.close(); } catch(Exception ee) {}
@@ -801,9 +833,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				}
 			}
 		}
-
+		return ret;
 	}
-
 	private void createDynamic(String name, String ip) throws ClassNotFoundException, SQLException {
 		Connection con = null;
 		PreparedStatement stmt = null;
@@ -878,7 +909,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				if( ret ) {
 					try {
 						dynamicFile = saveDynamicToFile();
-					} catch (FileNotFoundException e) {
+					} catch (IOException e) {
 						logError("Could not save dynamic to file",e);
 					}
 				}
@@ -897,14 +928,19 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		return ret;
 	}
 
-	private File loadDynamicFromFile(boolean saveNew) throws IOException {
+	/** The dynamic entries file (JDns.dynamicFileName, relative to the DNS directory). */
+	private File dynamicFilePath() {
 		String fileName = getProperty(PROP_DYNAMIC,"dynamic.txt");
-		log("Loading dynamic "+PROP_DYNAMIC+"= "+fileName);
-
 		File ret = new File(fileName);
 		if( !ret.isAbsolute() ) {
 			ret = new File(dnsDir,fileName);
 		}
+		return ret;
+	}
+
+	private File loadDynamicFromFile(boolean saveNew) throws IOException {
+		File ret = dynamicFilePath();
+		log("Loading dynamic "+PROP_DYNAMIC+"= "+ret);
 
 		if( ret.exists() ) {
 			BufferedReader in = new BufferedReader(new FileReader(ret));
@@ -913,17 +949,23 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				p.load(in);
 				for(Object key : p.keySet()) {
 					String name = key.toString();
+					//  The address comes from the file (it used to be read with
+					//  getProperty(name), i.e. from the system properties, so every
+					//  entry got a null address and loading failed).
+					String ip = p.getProperty(name);
 					if( getDynamic(name) == null) {
-						if( saveNew) {
-							try {
-								addOrUpdateDynamic(name, getProperty(name));								
-							} catch (ClassNotFoundException | SQLException e) {								
-								throw new IOException(e);
+						try {
+							if( saveNew) {
+								addOrUpdateDynamic(name, ip);
+							} else {
+								addDynamic(name, ip);
+								log("Loading dynamic from file "+name+" "+ip);
 							}
-						} else {
-							addDynamic(name, getProperty(name));
-							log("Loading dynamic from file "+name+" "+getProperty(name));
-
+						} catch (ClassNotFoundException | SQLException e) {
+							throw new IOException(e);
+						} catch (RuntimeException e) {
+							//  One bad line (e.g. an invalid address) doesn't stop the rest
+							logError("Skipping dynamic entry "+name+"="+ip+" in "+ret+": "+e.getMessage());
 						}
 					}
 				}				
@@ -935,37 +977,58 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		return ret;
 	}
 
+	public File saveDynamicToFile() throws IOException {
+		return saveDynamicToFile(dynamic);
+	}
 
-	public File saveDynamicToFile() throws FileNotFoundException {
-		String fileName = getProperty(PROP_DYNAMIC,"dynamic.txt");
-
-		log(PROP_DYNAMIC+"= "+fileName);
-
-
-		File ret = new File(fileName);
-		if( !ret.isAbsolute() ) {
-			ret = new File(dnsDir,fileName);
-		}
-
-		PrintStream out = new PrintStream(new FileOutputStream(ret));
+	/**
+	 * Write entries (name -> [A]) to the dynamic file. The file is written to
+	 * a temporary file and renamed, so a crash or a concurrent reader never
+	 * sees a half-written file.
+	 */
+	private File saveDynamicToFile(Map<String, List<A>> entries) throws IOException {
+		File ret = dynamicFilePath();
+		log(PROP_DYNAMIC+"= "+ret);
+		File dir = ret.getAbsoluteFile().getParentFile();
+		File tmp = File.createTempFile(ret.getName(), ".tmp", dir);
 		try {
-			out.println("# Dynamic entries saved at "+(new Date()));
-			for (Iterator<String> it = dynamic.keySet().iterator(); it.hasNext();) {
-				String name = (String) it.next();
-				List<A> list = dynamic.get(name);
-				A a = (A)list.get(0);
-				out.println(name+"="+a.getAddressString());
+			PrintStream out = new PrintStream(new FileOutputStream(tmp));
+			try {
+				out.println("# Dynamic entries saved at "+(new Date()));
+				for(Map.Entry<String, List<A>> e : new java.util.TreeMap<String, List<A>>(entries).entrySet()) {
+					out.println(e.getKey()+"="+e.getValue().get(0).getAddressString());
+				}
+			} finally {
+				out.close();
+			}
+			if( out.checkError() ) {
+				throw new IOException("Error writing "+tmp);
+			}
+			try {
+				java.nio.file.Files.move(tmp.toPath(), ret.toPath(),
+						java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+			} catch(java.nio.file.AtomicMoveNotSupportedException ex) {
+				java.nio.file.Files.move(tmp.toPath(), ret.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
 			}
 		} finally {
-			try {
-				out.close();
-			} catch (Exception e) {
-			}
+			tmp.delete();
 		}
-
-
 		return ret;
 	}
+
+	/**
+	 * Without a database the dynamic file is the store: write the entries as
+	 * they will be after a change, before the change is made in memory.
+	 * (Admin changes used to exist only in memory and were lost on restart.)
+	 */
+	private void storeDynamicFile(Map<String, List<A>> after) throws IOException {
+		if( !useDatabase() ) {
+			dynamicFile = saveDynamicToFile(after);
+			//  Our own write is not a change to reload
+			dynamicLoaded = dynamicFile.lastModified();
+		}
+	}
+
 
 	private File [] getZoneFiles() {
 		File [] ret = 	zoneDir.listFiles(new FilenameFilter() {
@@ -1768,10 +1831,16 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * in use by a query thread and is never modified).
 	 */
 	private A replaceDynamicAddress(A old, String ip) {
+		A a = copyWithAddress(old, ip);
+		putDynamic(a);
+		return a;
+	}
+
+	/** A new A like old but with another address (old is not modified). */
+	private static A copyWithAddress(A old, String ip) {
 		A a = new A(old.getName());
 		a.setAddress(ip);
 		a.setTTL(old.getTTL());
-		putDynamic(a);
 		return a;
 	}
 
@@ -1783,21 +1852,30 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * @return the A entry created or null if the domain is not valid
 	 */
 	public A addDynamic(String name, String addr) {
+		A ret = buildDynamic(name, addr);
+		if( ret != null ) {
+			putDynamic(ret);
+		}
+		return ret;
+	}
+
+	/**
+	 * Build (but don't publish) a dynamic A with the TTL of its zone.
+	 * @return null if the name is not in one of our domains
+	 * @throws IllegalArgumentException if the address is invalid
+	 */
+	private A buildDynamic(String name, String addr) {
 		A ret = null;
 		Name nn = new Name(name);
 		Zone zone = getZoneFor(nn);
 		if( zone == null &&  isCommon(nn) ) {
 			zone = getDefaultZone();
-		} 
-
-
+		}
 		if( zone != null ) {
 			ret = new A(name);
 			ret.setAddress(addr);
 			ret.setTTL(zone.getSoa().getTTL());
-			putDynamic(ret);
 		}
-
 		return ret;
 	}
 
@@ -1867,17 +1945,26 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		return ret;
 	}
 
+	/**
+	 * Remove a dynamic entry: the store first, then memory. (Memory used to
+	 * go first; if the database write failed the entry was gone until the
+	 * next database reload brought it back.)
+	 */
 	public void removeDynamic(String name) throws IOException  {
-		List<A> list = dynamic.remove(dynamicKey(name));
-
-		if( list != null) {
-			A a = list.get(0);
+		synchronized (dynamicLock) {
+			List<A> list = getDynamic(name);
+			if( list == null) {
+				return;
+			}
 			try {
-				saveDynamic(name,a.getAddressString(),STATUS_DELETED);
+				saveDynamic(name,list.get(0).getAddressString(),STATUS_DELETED);
 			} catch (ClassNotFoundException | SQLException e) {
 				throw new IOException(e);
 			}
+			Map<String, List<A>> after = new HashMap<String, List<A>>(dynamic);
+			after.remove(dynamicKey(name));
+			storeDynamicFile(after);
+			dynamic.remove(dynamicKey(name));
 		}
-
 	}
 }
