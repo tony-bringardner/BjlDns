@@ -102,6 +102,9 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	public static final String PROP_TCP_BIND_ADDRESS = "JDns.tcpBindAddress";
 	public static final String PROP_TCP_BACKLOG = "JDns.tcpBacklog";
 	public static final String PROP_TCP_TIMEOUT = "JDns.tcpTimeout";
+	/** Address the admin port listens on. Default: loopback only. Use 0.0.0.0 for all interfaces. */
+	public static final String PROP_ADMIN_BIND_ADDRESS = "JDns.adminBindAddress";
+	public static final String PROP_JDBC_URL = "JDns.jdbcURL";
 
 
 
@@ -128,6 +131,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 	private static ServerSocketFactory serverSocketFactory=ServerSocketFactory.getDefault();
 	private static volatile int adminPort = 9999;
+	//  Where the admin port listens (set in initServer, default loopback)
+	private volatile InetAddress adminBindAddress = InetAddress.getLoopbackAddress();
+	//  UDP/TCP processor threads started by initServer (for stopAndWait)
+	private final List<Thread> workers = new java.util.concurrent.CopyOnWriteArrayList<Thread>();
 	private static volatile boolean shutdown = false;
 	private static volatile boolean _debug = true;
 	private boolean standAlone=false;
@@ -256,26 +263,27 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * This dose not use the Jmail.Database
 	 * Factory because the connection will not remain open
 	 */
-	private Connection getConnection() {
-		Connection ret = null;
-
-		try {
-			String jdbcClass=getProperty("JDns.jdbcClass");
-			String url = getProperty("JDns.jdbcURL");
-			String user = getProperty("JDns.jdbcUser");
-			String password = getProperty("JDns.jdbcPassword");
-			Class.forName(jdbcClass);
-
-
-			ret = DriverManager.getConnection(url,user,password);
-
-
-
-		} catch(Exception ex) {
-			log(ex,"Database Init");
+	/**
+	 * Open a JDBC connection from JDns.jdbcClass / jdbcURL / jdbcUser / jdbcPassword.
+	 * @throws SQLException if it can't be opened. (It used to log and return
+	 * null, and every caller then failed with a NullPointerException.)
+	 */
+	private Connection getConnection() throws SQLException {
+		String jdbcClass = stringProperty("JDns.jdbcClass");
+		String url = stringProperty(PROP_JDBC_URL);
+		String user = getProperty("JDns.jdbcUser");
+		String password = getProperty("JDns.jdbcPassword");
+		if( url == null ) {
+			throw new SQLException(PROP_JDBC_URL+" is not set");
 		}
-
-		return ret;
+		if( jdbcClass != null ) {
+			try {
+				Class.forName(jdbcClass);
+			} catch(ClassNotFoundException ex) {
+				throw new SQLException("JDBC driver class not found: "+jdbcClass, ex);
+			}
+		}
+		return DriverManager.getConnection(url,user,password);
 	}
 
 	/**
@@ -398,92 +406,112 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		loadCommon();
 		loadDynamic();
 
-		int alltimeout = 5000;
-		int dnsPort = Message.DNSPORT;
-		if( (tmp=getProperty(PROP_PORT)) != null) {
-			dnsPort = Integer.parseInt(tmp);
-		}
-
-		if( (tmp=getProperty(PROP_TIMEOUT)) != null) {
-			alltimeout = Integer.parseInt(tmp);
-		}
+		int alltimeout = intProperty(PROP_TIMEOUT, 5000);
+		int dnsPort = intProperty(PROP_PORT, Message.DNSPORT);
 
 		InetAddress bindAddress = InetAddress.getLoopbackAddress();
-		if( (tmp=getProperty(PROP_BIND_ADDRESS)) != null) {
+		if( (tmp=stringProperty(PROP_BIND_ADDRESS)) != null) {
 			bindAddress = createBindAddress(tmp);
 		}
 
-		int port = dnsPort;
-		if( (tmp=getProperty(PROP_UDP_PORT)) != null) {
-			port = Integer.parseInt(tmp);
+		//  ---- UDP (each setting falls back to the general one)
+		int udpPort = intProperty(PROP_UDP_PORT, dnsPort);
+		InetAddress udpAddress = bindAddress;
+		if( (tmp=stringProperty(PROP_UDP_BIND_ADDRESS)) != null) {
+			udpAddress = createBindAddress(tmp);
 		}
-		InetAddress address = bindAddress;
-		if( (tmp=getProperty(PROP_UDP_BIND_ADDRESS)) != null) {
-			address = createBindAddress(tmp);
-		}
-
-		int udpTimeout = alltimeout;
-		if( (tmp=getProperty(PROP_UDP_TIMEOUT)) != null) {
-			alltimeout = Integer.parseInt(tmp);
-		}
+		//  (JDns.udpTimeout used to overwrite the general timeout instead of
+		//  setting the UDP one, so it changed the TCP timeout and not UDP's)
+		int udpTimeout = intProperty(PROP_UDP_TIMEOUT, alltimeout);
+		UDPProsessor.setMaxResponseSize(intProperty(PROP_UDP_MAX_RESPONSE, UDPProsessor.getMaxResponseSize()));
 
 		UDPProcs = new UDPProsessor[UDPProcCount];
 		Thread t = null;
-		log("UDP BindAddress = "+bindAddress+":"+port+" timout="+udpTimeout);
-		if( (tmp=getProperty(PROP_UDP_MAX_RESPONSE)) != null) {
-			UDPProsessor.setMaxResponseSize(Integer.parseInt(tmp.trim()));
-		}
-		UDPProsessor.initUDPProsessor(port,address,udpTimeout);
+		log("UDP BindAddress = "+udpAddress+":"+udpPort+" timeout="+udpTimeout+" maxResponse="+UDPProsessor.getMaxResponseSize());
+		UDPProsessor.initUDPProsessor(udpPort,udpAddress,udpTimeout);
 
 		for(int i=0; i< UDPProcs.length; i++ ) {
 			UDPProcs[i] = new UDPProsessor(this,i);
 			t = new Thread(UDPProcs[i]);
 			t.setName("UDPProc"+i);
+			workers.add(t);
 			t.start();
 		}
 
+		//  ---- TCP
 		TCPProcs = new TCPProsessor[TCPProcCount];
-		port = dnsPort;
-		if( (tmp=getProperty(PROP_TCP_PORT)) != null) {
-			port = Integer.parseInt(tmp);
+		int tcpPort = intProperty(PROP_TCP_PORT, dnsPort);
+		int backlog = intProperty(PROP_TCP_BACKLOG, 10);
+		//  (JDns.tcpBindAddress used to be read and then ignored)
+		InetAddress tcpAddress = bindAddress;
+		if( (tmp=stringProperty(PROP_TCP_BIND_ADDRESS)) != null) {
+			tcpAddress = createBindAddress(tmp);
 		}
-		int backlong = 10;
-		if( (tmp=getProperty(PROP_TCP_BACKLOG)) != null) {
-			backlong = Integer.parseInt(tmp);
-		}
+		int tcpTimeout = intProperty(PROP_TCP_TIMEOUT, alltimeout);
 
-		if( (tmp=getProperty(PROP_TCP_BIND_ADDRESS)) != null) {
-			address = createBindAddress(tmp);
-		}
-
-		int tcpTimeout = alltimeout;
-		if( (tmp=getProperty(PROP_TCP_TIMEOUT)) != null) {
-			tcpTimeout = Integer.parseInt(tmp);
-		}
-
-		log("TCP BindAddress = "+bindAddress+":"+port+" backlog="+backlong+" timout="+tcpTimeout);
-		TCPProsessor.initTCPProsessor(port,backlong,bindAddress,tcpTimeout);
+		log("TCP BindAddress = "+tcpAddress+":"+tcpPort+" backlog="+backlog+" timeout="+tcpTimeout);
+		TCPProsessor.initTCPProsessor(tcpPort,backlog,tcpAddress,tcpTimeout);
 
 		for(int i=0; i< TCPProcs.length; i++ ) {
 			TCPProcs[i] = new TCPProsessor(this,i);
 			t = new Thread(TCPProcs[i]);
 			t.setName("TCPProc"+i);
+			workers.add(t);
 			t.start();
 		}
 
 		us.bringardner.net.dns.resolve.Resolver.initResolver();
 
 
-		//  Init the server admin values
-
-		if( (tmp=getProperty(PROP_ADMIN_PORT))!=null) {
-			try {
-				setAdminPort(Integer.parseInt(tmp));
-			} catch(Exception ex) {}
+		//  ---- Admin (the socket is opened in run())
+		setAdminPort(intProperty(PROP_ADMIN_PORT, getAdminPort()));
+		adminBindAddress = InetAddress.getLoopbackAddress();
+		if( (tmp=stringProperty(PROP_ADMIN_BIND_ADDRESS)) != null) {
+			adminBindAddress = createBindAddress(tmp);
 		}
 
 		log("JDns Server init Complete");
 	}  
+
+	/** @return the trimmed property value, or null if it is not set or empty */
+	private String stringProperty(String name) {
+		String ret = getProperty(name);
+		if( ret != null ) {
+			ret = ret.trim();
+			if( ret.isEmpty() ) {
+				ret = null;
+			}
+		}
+		return ret;
+	}
+
+	/**
+	 * @return the integer value of a property, or def if it is not set or empty
+	 * @throws IOException naming the property if the value is not a number
+	 */
+	int intProperty(String name, int def) throws IOException {
+		String tmp = stringProperty(name);
+		if( tmp == null ) {
+			return def;
+		}
+		try {
+			return Integer.parseInt(tmp);
+		} catch(NumberFormatException ex) {
+			throw new IOException("Invalid number for "+name+": '"+tmp+"'");
+		}
+	}
+
+	public InetAddress getAdminBindAddress() {
+		return adminBindAddress;
+	}
+
+	/**
+	 * Open the admin listener on adminPort / adminBindAddress. It used to
+	 * listen on every interface regardless of the DNS bind address.
+	 */
+	ServerSocket createAdminSocket() throws IOException {
+		return getServerSocketFactory().createServerSocket(getAdminPort(), 50, adminBindAddress);
+	}
 
 	private InetAddress createBindAddress(String tmp) throws UnknownHostException {
 		InetAddress ret = InetAddress.getLoopbackAddress();
@@ -514,10 +542,14 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		dnsDir=new File(getProperty(PROP_DNS_DIR,DEFAULT_DNS_DIR));
 
 		if( (tmp=getProperty(PROP_UDP_PROC_COUNT)) != null)  {
-			try { UDPProcCount =Integer.parseInt(tmp); } catch(Exception ex) {}
+			try { UDPProcCount =Integer.parseInt(tmp.trim()); } catch(Exception ex) {
+				logError("Invalid number for "+PROP_UDP_PROC_COUNT+": '"+tmp+"', using "+UDPProcCount);
+			}
 		}
 		if( (tmp=getProperty(PROP_TCP_PROC_COUNT)) != null)  {
-			try { TCPProcCount =Integer.parseInt(tmp); } catch(Exception ex) {}
+			try { TCPProcCount =Integer.parseInt(tmp.trim()); } catch(Exception ex) {
+				logError("Invalid number for "+PROP_TCP_PROC_COUNT+": '"+tmp+"', using "+TCPProcCount);
+			}
 		}
 
 	}
@@ -729,8 +761,18 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		}
 	}
 
-	private boolean useDatabase() {		
-		return getProperty(PROP_USE_BATABASE,"true").toLowerCase().startsWith("t");
+	/**
+	 * JDns.useDataBase=true/false decides. If it is not set, the database is
+	 * used only when JDns.jdbcURL is configured. (The old default was 'true',
+	 * so a server without a database tried to connect on every dynamic update
+	 * and reload, logged errors and hit NullPointerExceptions.)
+	 */
+	boolean useDatabase() {
+		String flag = stringProperty(PROP_USE_BATABASE);
+		if( flag != null ) {
+			return flag.toLowerCase().startsWith("t");
+		}
+		return stringProperty(PROP_JDBC_URL) != null;
 	}
 
 	private boolean loadDynamicFromDb() throws ClassNotFoundException, SQLException {
@@ -1079,9 +1121,9 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 		try {
 			int port = getAdminPort();
-			svrSock = getServerSocketFactory().createServerSocket(port);
+			svrSock = createAdminSocket();
 			svrSock.setSoTimeout((int)acceptTimeout);
-			log("Started dnsAdmin on port "+port);
+			log("Started dnsAdmin on "+adminBindAddress+":"+port);
 			setState("Running got socket");
 		} catch(IOException ex) {
 			log("Can't create server socket on port "+getAdminPort(),ex);
@@ -1646,8 +1688,47 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	public void stop() 	{
 		running = false;
 		shutdown = true;
-		thread.interrupt();
+		Thread t = thread;
+		if( t != null ) {
+			t.interrupt();
+		}
 		Resolver.shutDown();
+	}
+
+	/**
+	 * Stop the server and wait (up to timeoutMs in total) for the threads it
+	 * started to finish. The listening sockets are closed so threads blocked
+	 * in receive()/accept() wake up at once instead of after their socket
+	 * timeout (stop() alone left them running for up to that long, and they
+	 * kept serving if the shutdown flag was cleared in the meantime).
+	 * 
+	 * @return true if every thread finished in time
+	 */
+	public boolean stopAndWait(long timeoutMs) throws InterruptedException {
+		long deadline = System.currentTimeMillis()+timeoutMs;
+		stop();
+		java.net.DatagramSocket udp = UDPProsessor.getSock();
+		if( udp != null ) {
+			udp.close();
+		}
+		ServerSocket tcp = TCPProsessor.getServerSocket();
+		if( tcp != null ) {
+			try {
+				tcp.close();
+			} catch(IOException ex) {
+			}
+		}
+		boolean ret = true;
+		for(Thread w : workers) {
+			long left = deadline - System.currentTimeMillis();
+			if( left > 0 ) {
+				w.join(left);
+			}
+			ret &= !w.isAlive();
+		}
+		long left = deadline - System.currentTimeMillis();
+		ret &= Resolver.awaitShutdown(Math.max(1, left));
+		return ret;
 	}
 
 	public void removeDynamic(String name) throws IOException  {

@@ -68,6 +68,11 @@ public TCPProsessor(DnsServer svr, int me) {
 	server   = svr;
 }
 
+/** The shared TCP listen socket (null before initTCPProsessor). */
+public static ServerSocket getServerSocket() {
+	return serverSocket;
+}
+
 public synchronized static void initTCPProsessor(int bindPort,int backlog,InetAddress bindAddress, int timeout) throws IOException {
 	
 		serverSocket = new ServerSocket(bindPort,backlog,bindAddress);
@@ -127,7 +132,10 @@ public void run ()
 			doit = false;
 			setState("Running Timed Out, doit="+doit);
 		} catch(Exception ex) {
-			log("Exception in TCP sock.accept()",ex);
+			if( !DnsServer.isShutdown() ) {
+				//  (the socket is closed on shutdown; that is not an error)
+				log("Exception in TCP sock.accept()",ex);
+			}
 			doit = false;
 			setState("Running Exception?, doit="+doit);
 		}
