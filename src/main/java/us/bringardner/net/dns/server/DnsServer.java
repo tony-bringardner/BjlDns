@@ -1411,7 +1411,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 		} else {
 			if( !recursionAvailable ) {
-				ret.setResponseCodeNameError();
+				//  Not our name and we don't recurse: REFUSED (RFC 8906 3.1.5).
+				//  It used to be NXDOMAIN, claiming that names we are not
+				//  authoritative for (e.g. google.com) don't exist.
+				ret.setResponseCodeRefused();
 			} else {
 				ret = step4And5(query , ret);
 			}
@@ -1701,9 +1704,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				ret = us.bringardner.net.dns.resolve.ResolverThread.failure(question, DNS.SERVER_ERROR);
 			}
 		} else {
-			ret.setID(msg.getID());
+			//  Recursion available but not desired, and not our name:
+			//  REFUSED (it used to be an empty NOERROR answer).
+			ret.setResponseCodeRefused();
 		}
-
 		if( ret != null ) {
 			ret.setID(msg.getID());
 		}
