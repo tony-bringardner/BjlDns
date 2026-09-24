@@ -175,9 +175,8 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 	 * @see     java.lang.Thread#run()
 	 */
 	public void run() {
-
-		running = true;
-
+		//  'running' is set by start(): setting it here raced with stop() and
+		//  a thread stopped right after starting would run forever.
 		while( running ) {
 			try {
 				setState("Waiting on fifo");
@@ -199,6 +198,11 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 						msg = failure(question, DNS.SERVER_ERROR);
 					}
 					sendResponse(msg,question);
+				}
+			} catch(InterruptedException ex) {
+				//  stop() interrupts the wait on the queue
+				if( !running ) {
+					break;
 				}
 			} catch(Exception ex) {
 				logError("Unexpected error in resolver thread", ex);
@@ -245,8 +249,9 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 		setState("SendResponse End");
 	}
 	
-	public void start(String name) {
+	public synchronized void start(String name) {
 		if( !running ) {
+			running = true;
 			thread = new Thread(this);
 			thread.setName(name);
 			thread.start();
@@ -256,7 +261,20 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 	
 	public void stop() {
 		running = false;
-		thread.interrupt();
+		Thread t = thread;
+		if( t != null ) {
+			t.interrupt();
+		}
+	}
+
+	/** Wait up to ms for this resolver thread to finish. @return true if it has */
+	public boolean join(long ms) throws InterruptedException {
+		Thread t = thread;
+		if( t != null ) {
+			t.join(ms);
+			return !t.isAlive();
+		}
+		return true;
 	}
 	
 }

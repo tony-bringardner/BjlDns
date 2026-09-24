@@ -599,6 +599,21 @@ public class Resolver  extends DnsBaseClass
 		return ret;
 	}
 	
+	/**
+	 * Wait up to ms for the resolver threads stopped by shutDown() to finish.
+	 * @return true if they all have
+	 */
+	public static boolean awaitShutdown(long ms) throws InterruptedException {
+		ResolverThread [] list = resolvers;
+		boolean ret = true;
+		long deadline = System.currentTimeMillis()+ms;
+		for(int i=0; list != null && i< list.length; i++ ) {
+			long left = Math.max(1, deadline - System.currentTimeMillis());
+			ret &= list[i].join(left);
+		}
+		return ret;
+	}
+
 	public static void shutDown() {
 		stopCacheSweeper();
 		for(int i=0; resolvers != null && i< resolvers.length; i++ ) {
