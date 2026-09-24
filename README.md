@@ -17,3 +17,56 @@ Dependencies:
 + BjlCore  
 + BjlIo
  			
+
+# Running in production
+
+Run the server under a supervisor (systemd, launchd, a container runtime) that restarts it when it stops, and let the JVM exit on fatal errors instead of limping on:
+
+```
+java -Xmx256m -XX:+ExitOnOutOfMemoryError \
+     -DJDns.properties=/data/services/dns/config/JDns.properties \
+     -cp bjl_dns.jar:bjl_core.jar:bjl_io.jar us.bringardner.net.dns.server.DnsServer
+```
+
+`DnsServer.main` also installs `FatalErrorHandler`: any thread that dies from an uncaught error is logged, and on a JVM error (e.g. `OutOfMemoryError`) the process halts with exit code 1 so the supervisor starts a clean one. Set `-DJDns.exitOnFatalError=false` to only log. Applications that embed the server can call `FatalErrorHandler.install(true)`.
+
+Example systemd unit:
+
+```
+[Unit]
+Description=BjlDns
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/java -Xmx256m -XX:+ExitOnOutOfMemoryError -DJDns.properties=/data/services/dns/config/JDns.properties -cp /opt/bjldns/lib/* us.bringardner.net.dns.server.DnsServer
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## Configuration properties
+
+Set in the properties file (`JDns.properties`) or with `-D`. Besides the existing ones (`JDns.dnsPort`, `JDns.bindAddress`, `JDns.zone.dir`, `JDns.master.zone`, ...):
+
+| Property | Default | Meaning |
+|---|---|---|
+| `JDns.udpTimeout` / `JDns.tcpTimeout` | `JDns.timeout` (5000) | Socket timeouts (ms); how often listeners check for shutdown |
+| `JDns.tcpBindAddress` / `JDns.udp.bindAddress` | `JDns.bindAddress` | Per-protocol listen address |
+| `JDns.udpMaxResponse` | 512 | Largest UDP response (bytes); bigger answers are truncated (TC) and clients retry over TCP |
+| `JDns.tcpMaxConnections` | 64 | TCP connections served at once; more are closed immediately |
+| `JDns.tcpIdleTimeout` | 10000 | An idle TCP connection is closed after this many ms |
+| `JDns.maxCacheEntries` | 10000 | Resolver cache size (LRU) |
+| `JDns.cacheSweepSeconds` | 60 | How often expired cache entries are removed |
+| `JDns.maxCacheAge` | 1800000 | Upper bound (ms) on how long anything is cached |
+| `JDns.maxNegativeTtl` | 10800 | Upper bound (s) for caching "does not exist" answers |
+| `JDns.maxDelegations` | 10000 | Learned delegations kept (LRU) |
+| `JDns.delegationMaxAge` | 3600 | Seconds a learned delegation is used before a fresh referral replaces it |
+| `Resolver.maxBacklog` | 20 | Queued recursive queries; when full, clients get SERVFAIL |
+| `JDns.adminBindAddress` | loopback | Admin port listen address (`0.0.0.0` for all interfaces) |
+| `JDns.adminSecret` | none | Shared secret for the admin port (challenge-response). Without it only local clients are accepted. `DnsAdminClient` reads the same property |
+| `JDns.adminMaxConnections` | 8 | Admin sessions at once |
+| `JDns.adminIdleTimeout` | 600000 | Idle admin sessions are closed after this many ms |
+| `JDns.useDataBase` | only if `JDns.jdbcURL` is set | Use the database for common domains and dynamic records |
+| `JDns.exitOnFatalError` | true (standalone) | Halt the process on a JVM error (see above) |

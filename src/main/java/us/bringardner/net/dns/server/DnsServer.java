@@ -1098,13 +1098,19 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * @param args java.lang.String[]
 	 */
 	public static void main(String[] args) {
+		//  Log dead threads; on a JVM error (e.g. OutOfMemoryError) stop the
+		//  process so a supervisor restarts it (see FatalErrorHandler)
+		FatalErrorHandler.install(!"false".equalsIgnoreCase(
+				System.getProperty(FatalErrorHandler.PROP_EXIT_ON_FATAL_ERROR,"true").trim()));
+
 		us.bringardner.net.dns.server.DnsServer svr = new DnsServer();
-
-
 		svr.start(true);
-
 		while(!svr.running) {
-			Thread.yield();
+			try {
+				Thread.sleep(50);
+			} catch (InterruptedException e) {
+				return;
+			}
 		}
 
 		while(svr.isRunning()) {
@@ -1245,10 +1251,6 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 					setState("Processing conneciton");
 				}
 
-			} catch (OutOfMemoryError ex) {
-				System.out.println("Out of memory");
-				ex.printStackTrace();
-				System.exit(1);
 			} catch(Exception ex) {
 				//Ignore exceptions
 			}

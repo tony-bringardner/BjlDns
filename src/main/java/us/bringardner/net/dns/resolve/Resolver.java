@@ -62,8 +62,7 @@ public class Resolver  extends DnsBaseClass
 
 	private static volatile Cache cache = new Cache();
 
-	//  This is created ahead of time in case we're out of memory & want to reset things
-	private static volatile Cache safty = new Cache();
+
 
 	private static final List<RemoteServer> sbelt = new CopyOnWriteArrayList<RemoteServer>();
 	//  this is used to 'round robin' the starting server	
@@ -343,7 +342,7 @@ public class Resolver  extends DnsBaseClass
 				int max = Integer.parseInt(tmp.trim());
 				Cache.setDefaultMaxEntries(max);
 				cache.setMaxEntries(max);
-				safty.setMaxEntries(max);
+
 			} catch(Exception ex) {
 				Resolver logger = new Resolver();
 				logger.logError("Error setting "+PROP_MAX_CACHE_ENTRIES,ex);
@@ -467,10 +466,11 @@ public class Resolver  extends DnsBaseClass
 		}
 	}
 	
+	/** Empty the cache and the learned delegations (admin 'reset'). */
 	public static void reset() {
-		cache = safty;
-		System.gc();
-		safty = new Cache();
+		//  (used to swap in a spare cache kept for out-of-memory emergencies
+		//  and call System.gc(); the cache is bounded now)
+		cache.clear();
 		synchronized (servers) {
 			servers.clear();
 		}
