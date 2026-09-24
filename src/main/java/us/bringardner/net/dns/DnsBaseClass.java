@@ -35,7 +35,18 @@ import us.bringardner.core.BaseObject;
  */
 public class DnsBaseClass extends BaseObject {
 	
-	private String state = "Not Started";
+	//  setState is called several times per query, so it only stores
+	//  references; the text is built when someone asks (admin status).
+	private static final class State {
+		final String text;
+		final Object detail;
+		final long time = System.currentTimeMillis();
+		State(String text, Object detail) {
+			this.text = text;
+			this.detail = detail;
+		}
+	}
+	private volatile State state = new State("Not Started", null);
 /**
  * FtpBaseClass constructor comment.
  */
@@ -61,7 +72,12 @@ public void log(Exception ex,String msg) {
  * @return java.lang.String
  */
 public java.lang.String getState() {
-	return state;
+	State s = state;
+	StringBuilder ret = new StringBuilder(s.text);
+	if( s.detail != null ) {
+		ret.append(':').append(s.detail);
+	}
+	return ret.append(' ').append(new java.util.Date(s.time)).toString();
 }
 
 
@@ -72,6 +88,15 @@ public java.lang.String getState() {
  */
 public void setState(java.lang.String newState) 
 {
-	state = newState+" "+(new java.util.Date());
+	state = new State(newState, null);
+}
+
+/**
+ * Like setState(String) but detail.toString() is only called if the state
+ * is displayed.
+ */
+public void setState(java.lang.String newState, Object detail) 
+{
+	state = new State(newState, detail);
 }
 }

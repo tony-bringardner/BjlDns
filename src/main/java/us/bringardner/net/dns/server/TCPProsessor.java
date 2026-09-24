@@ -234,7 +234,7 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 				}
 				taken = true;
 				pool.execute(new Connection(server, sock, free));
-				setState("Handed off connection from "+sock.getInetAddress());
+				setState("Handed off connection from", sock.getInetAddress());
 			} catch(RejectedExecutionException ex) {
 				//  All connection slots busy: close now, the client can retry
 				if( taken ) {

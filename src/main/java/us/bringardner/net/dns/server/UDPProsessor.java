@@ -141,22 +141,22 @@ public void run ()
 				} else {
 					doit = false;
 				}
-				setState("Running after sock.rec doit="+doit);
+				setState(doit ? "Running after sock.rec doit=true" : "Running after sock.rec doit=false");
 			}
 		} catch(InterruptedIOException ex) {
 			//  Timed out
 			doit = false;
-			setState("Running Timeout doit="+doit);
+			setState("Running Timeout doit=false");
 		} catch(Exception ex) {
 			//log("Exception in UDP sock.receive(recPckt)",ex);
 			doit = false;
-			setState("Running Error doit="+doit);
+			setState("Running Error doit=false");
 		}
 
 		ByteBuffer buf = null;
 		if( doit ) {
 			try {
-				setState("Running Begin processing doit="+doit);
+				setState("Running Begin processing doit=true");
 				
 				client = recPckt.getAddress();
 				port = recPckt.getPort();
