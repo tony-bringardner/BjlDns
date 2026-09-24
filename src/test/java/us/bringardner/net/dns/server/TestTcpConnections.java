@@ -214,6 +214,23 @@ public class TestTcpConnections {
 		}
 	}
 
+	/**
+	 * With one slot, back-to-back clients must all be served: the slot is
+	 * free as soon as the previous connection is closed, even if its pool
+	 * thread has not quite finished (that used to reject some of them).
+	 */
+	@Test
+	public void freedSlotIsReusableAtOnce() throws Exception {
+		try(Listener l = new Listener(1, 5000)) {
+			long rejectedBefore = TCPProsessor.getRejected();
+			for(int i=0; i < 300; i++ ) {
+				waitFor(() -> TCPProsessor.getActiveConnections() == 0, 3000);
+				assertEquals(1, query(l.port, "www.tcp.test").getAnswerCount(), "query "+i);
+			}
+			assertEquals(rejectedBefore, TCPProsessor.getRejected(), "no connection rejected");
+		}
+	}
+
 	@Test
 	public void shutdownClosesOpenConnections() throws Exception {
 		Listener l = new Listener(8, 30_000);

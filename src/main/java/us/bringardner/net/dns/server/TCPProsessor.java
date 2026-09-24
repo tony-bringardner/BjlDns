@@ -34,8 +34,9 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -84,6 +85,12 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 	private static final Set<Socket> openConnections = ConcurrentHashMap.newKeySet();
 	private static volatile int idleTimeout = DEFAULT_IDLE_TIMEOUT;
 	private static final AtomicLong rejected = new AtomicLong();
+	//  Connection slots. A slot is taken by the acceptor and given back as
+	//  the last thing a Connection does, so a freed slot can be used at once
+	//  (the pool thread may still be finishing; the new connection then waits
+	//  in the pool queue for a moment instead of being rejected).
+	private static volatile Semaphore slots = new Semaphore(DEFAULT_MAX_CONNECTIONS);
+	private static volatile int maxSlots = DEFAULT_MAX_CONNECTIONS;
 
 	public static volatile boolean debug = false;
 
@@ -121,19 +128,23 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 
 		int max = maxConnections > 0 ? maxConnections : DEFAULT_MAX_CONNECTIONS;
 		final AtomicInteger n = new AtomicInteger();
+		//  Admission is limited by the slots semaphore, so the queue never
+		//  holds more than a connection or two waiting for a thread to finish.
 		ThreadPoolExecutor pool = new ThreadPoolExecutor(max, max, 30, TimeUnit.SECONDS,
-				new SynchronousQueue<Runnable>(), r -> {
+				new LinkedBlockingQueue<Runnable>(), r -> {
 					Thread t = new Thread(r, "TCPConn"+n.incrementAndGet());
 					t.setDaemon(true);
 					return t;
 				});
 		pool.allowCoreThreadTimeOut(true);
+		slots = new Semaphore(max);
+		maxSlots = max;
 		connectionPool = pool;
 	}
 
 	/** Number of TCP connections being served now. */
 	public static int getActiveConnections() {
-		return openConnections.size();
+		return maxSlots - slots.availablePermits();
 	}
 
 	/** Connections closed at once because maxConnections were already open. */
@@ -212,14 +223,23 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 			}
 
 			ThreadPoolExecutor pool = connectionPool;
+			Semaphore free = slots;
+			boolean taken = false;
 			try {
 				if( pool == null ) {
 					throw new RejectedExecutionException("no connection pool");
 				}
-				pool.execute(new Connection(server, sock));
+				if( !free.tryAcquire() ) {
+					throw new RejectedExecutionException("all connection slots busy");
+				}
+				taken = true;
+				pool.execute(new Connection(server, sock, free));
 				setState("Handed off connection from "+sock.getInetAddress());
 			} catch(RejectedExecutionException ex) {
 				//  All connection slots busy: close now, the client can retry
+				if( taken ) {
+					free.release();
+				}
 				rejected.incrementAndGet();
 				if( DnsServer.isDebug() ) {
 					log("TCP connection from "+sock.getInetAddress()+" rejected, "+getActiveConnections()+" connections open");
@@ -257,10 +277,12 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 	static final class Connection extends DnsRequestProcessor implements Runnable {
 		private final Socket sock;
 		private final InetAddress client;
+		private final Semaphore slot;
 
-		Connection(DnsServer svr, Socket sock) {
+		Connection(DnsServer svr, Socket sock, Semaphore slot) {
 			this.server = svr;
 			this.sock = sock;
+			this.slot = slot;
 			this.client = sock.getInetAddress();
 		}
 
@@ -327,6 +349,7 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 					sock.close();
 				} catch(IOException ex) {
 				}
+				slot.release();
 			}
 		}
 
