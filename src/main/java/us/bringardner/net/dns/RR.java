@@ -62,7 +62,13 @@ public  class RR extends Section
  		Make a copy of this RR
 	 **/
 	public  RR copy() {
-		throw new IllegalStateException("copy MUST be overridden! type "+getType());
+		if( getClass() != RR.class ) {
+			throw new IllegalStateException("copy MUST be overridden! type "+getType());
+		}
+		// Generic RR (unsupported / OPT types): copy the raw fields
+		RR ret = new RR();
+		copy(ret);
+		return ret;
 	}
 	
 	/**

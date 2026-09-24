@@ -51,11 +51,15 @@ public class Resolver  extends DnsBaseClass
 	private static final String PROP_MAX_DNS_CACHE_AGE = "JDns.maxCacheAge";
 
 	private static final String PROP_RESOLVER_COUNT = "JDns.resolvers";
+	public static final String PROP_MAX_CACHE_ENTRIES = "JDns.maxCacheEntries";
+	public static final String PROP_CACHE_SWEEP_SECONDS = "JDns.cacheSweepSeconds";
+	//  Periodically removes expired cache entries
+	private static java.util.concurrent.ScheduledExecutorService cacheSweeper;
 
-	private static Cache cache = new Cache();
+	private static volatile Cache cache = new Cache();
 
 	//  This is created ahead of time in case we're out of memory & want to reset things
-	private static Cache safty = new Cache();
+	private static volatile Cache safty = new Cache();
 
 	private static List<RemoteServer> sbelt = new ArrayList<RemoteServer>();
 	//  this is used to 'round robin' the starting server	
@@ -163,7 +167,7 @@ public class Resolver  extends DnsBaseClass
 	public static String getStats()	{
 		String ret =
 
-				"Resolver Cache size="+cacheSize()+" RemoteServer size="+servers.size()+
+				"Resolver Cache size="+cacheSize()+"/"+cache.getMaxEntries()+" RemoteServer size="+servers.size()+
 				"\n Resolver capacity="+us.bringardner.net.dns.resolve.ResolverThread.getMaxBackLog()+
 				"  current="+us.bringardner.net.dns.resolve.ResolverThread.getBacklog()+
 				"\nResolver Stats: inflight="+(started-completed)+
@@ -251,6 +255,19 @@ public class Resolver  extends DnsBaseClass
 			}
 		}
 
+		if( (tmp=prop.getProperty(PROP_MAX_CACHE_ENTRIES)) != null ) {
+			try {
+				int max = Integer.parseInt(tmp.trim());
+				Cache.setDefaultMaxEntries(max);
+				cache.setMaxEntries(max);
+				safty.setMaxEntries(max);
+			} catch(Exception ex) {
+				Resolver logger = new Resolver();
+				logger.logError("Error setting "+PROP_MAX_CACHE_ENTRIES,ex);
+			}
+		}
+		startCacheSweeper(prop);
+
 		int resolverCount = 10;
 
 		if( (tmp=prop.getProperty(PROP_RESOLVER_COUNT)) != null ) {
@@ -306,6 +323,43 @@ public class Resolver  extends DnsBaseClass
 	
 	public static void removeOld() {
 		cache.removeOld();
+	}
+
+	/** Remove expired entries from the cache. @return number removed */
+	public static int removeExpired() {
+		return cache.removeExpired();
+	}
+
+	private static synchronized void startCacheSweeper(Properties prop) {
+		if( cacheSweeper != null ) {
+			return;
+		}
+		long seconds = 60;
+		String tmp = prop.getProperty(PROP_CACHE_SWEEP_SECONDS);
+		if( tmp != null ) {
+			try {
+				seconds = Math.max(1, Long.parseLong(tmp.trim()));
+			} catch(Exception ex) {}
+		}
+		cacheSweeper = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+			Thread t = new Thread(r,"ResolverCacheSweeper");
+			t.setDaemon(true);
+			return t;
+		});
+		cacheSweeper.scheduleWithFixedDelay(() -> {
+			try {
+				removeExpired();
+			} catch(Throwable ex) {
+				new Resolver().logError("Cache sweep failed",ex);
+			}
+		}, seconds, seconds, java.util.concurrent.TimeUnit.SECONDS);
+	}
+
+	private static synchronized void stopCacheSweeper() {
+		if( cacheSweeper != null ) {
+			cacheSweeper.shutdownNow();
+			cacheSweeper = null;
+		}
 	}
 	
 	public static void reset() {
@@ -414,7 +468,8 @@ public class Resolver  extends DnsBaseClass
 	}
 	
 	public static void shutDown() {
-		for(int i=0; i< resolvers.length; i++ ) {
+		stopCacheSweeper();
+		for(int i=0; resolvers != null && i< resolvers.length; i++ ) {
 			resolvers[i].stop();
 		}
 		//ResolverThread.notifyThreads();
