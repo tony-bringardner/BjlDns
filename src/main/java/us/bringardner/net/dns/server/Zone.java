@@ -618,10 +618,36 @@ public class Zone implements DNS {
 	 * and their A records if available.
 	 **/
 	public void setLocalInfo(Message ret) {
-
 		if( ret.getAnswerCount() == 0 && ret.getNSCount()==0) {
-			ret.addAuthority(soa);
+			ret.addAuthority(getNegativeSoa());
 		}
+	}
+
+	/**
+	 * The SOA to put in the authority section of a negative answer
+	 * (NXDOMAIN / NODATA): a copy whose TTL is min(SOA TTL, SOA MINIMUM),
+	 * RFC 2308 section 3, which is how long resolvers may cache the answer.
+	 */
+	public us.bringardner.net.dns.RR getNegativeSoa() {
+		us.bringardner.net.dns.RR ret = soa.copy();
+		ret.setTTL(Math.min(soa.getTTL(), soa.getMinimum()));
+		return ret;
+	}
+
+	/**
+	 * @return true if the zone has a (non wildcard) name below 'name', i.e.
+	 * 'name' is an empty non-terminal: it exists but has no records of its
+	 * own, so it must get NODATA, not NXDOMAIN (RFC 8020).
+	 */
+	public boolean hasNamesBelow(String name) {
+		String suffix = "."+name.toLowerCase();
+		for(Name n : names) {
+			String s = n.toString().toLowerCase();
+			if( s.indexOf('*') < 0 && s.endsWith(suffix) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**

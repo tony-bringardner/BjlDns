@@ -1262,9 +1262,17 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		return ret;
 	}
 
-	/* RFC 1034
+	/**
+	 * @return true if name is the apex of the zone we answer from: the zone's
+	 * own name, or a 'common' domain served from the default zone.
+	 */
+	private boolean isZoneApex(String name, Zone zone) {
+		String n = name.toLowerCase();
+		return n.equals(zone.getName().toLowerCase()) || common.containsKey(n);
+	}
 
-   3. Start matching down, label by label, in the zone.  The
+	/* RFC 1034
+   3. Start matching down, label by label, in the zone.The
       matching process can terminate several ways:
 
          a. If the whole of QNAME is matched, we have found the
@@ -1358,9 +1366,17 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		}
 		//System.out.println(target+" list 2="+list1);
 		if( list == null ) {
-			//  Since we found a zone, if no matches are found, its an error.
-			//ret.setResponseCodeNameError();
-			ret.addAuthority(zone.getSoa());
+			//  We are authoritative for this zone and the name has no records.
+			//  NXDOMAIN (RFC 1034 4.3.2 step 3c), unless it is an empty
+			//  non-terminal (has names below it), which exists: NODATA.
+			//  Either way the SOA goes in the authority section (RFC 2308 3).
+			//  After a CNAME this also sets the final RCODE (RFC 6604).
+			if( zone.hasNamesBelow(target) ) {
+				ret.setResponseCodeNoError();
+			} else {
+				ret.setResponseCodeNameError();
+			}
+			ret.addAuthority(zone.getNegativeSoa());
 		} else {
 
 			//  Since we found the name it's not a name error even if we may not have the type
@@ -1428,9 +1444,19 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 
 
+		//  NODATA at the zone apex: the loop above put the zone's own NS records
+		//  in the authority section, which other resolvers read as a referral
+		//  (to the same servers). RFC 2308 2.2: answer with the SOA instead.
+		//  (NS records at any other name are a delegation and are kept.)
+		if( ret.getAnswerCount() == 0 && ret.isResponseCodeNoError() && list != null
+				&& isZoneApex(target, zone) ) {
+			ret.getAuthority().clear();
+			ret.getAdditional().clear();
+		}
+
 		if( doNs && ret.getNSCount() == 0 ) {
 			if( ret.isResponseCodeNameError() ) {
-				ret.addAuthority(zone.getSoa());
+				ret.addAuthority(zone.getNegativeSoa());
 			} else {
 				//  No ns records.  Add the domain info
 				zone.setLocalInfo(ret);
