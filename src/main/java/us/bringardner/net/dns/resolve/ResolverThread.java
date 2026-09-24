@@ -58,12 +58,79 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 		sock = us.bringardner.net.dns.server.UDPProsessor.getSock();
 	}
 	
-	public static void addQuery(QueryData query) {
+	//  Counters for getStats()
+	private static final java.util.concurrent.atomic.AtomicLong dropped = new java.util.concurrent.atomic.AtomicLong();
+	private static final java.util.concurrent.atomic.AtomicLong failed = new java.util.concurrent.atomic.AtomicLong();
+
+	/**
+	 * Queue a recursive query for a resolver thread.
+	 * 
+	 * @return false if it could not be queued (backlog full). The caller must
+	 * then answer the client itself (SERVFAIL); it used to be dropped silently
+	 * and the client waited for its own timeout.
+	 */
+	public static boolean addQuery(QueryData query) {
+		boolean ret = false;
 		try {
-			if( !fifo.isFull() ) {
-				fifo.add(query);
+			synchronized (fifo) {
+				if( !fifo.isFull() ) {
+					fifo.add(query);
+					ret = true;
+				}
 			}
 		} catch(Exception ex) {}
+		if( !ret ) {
+			dropped.incrementAndGet();
+		}
+		return ret;
+	}
+
+	/** Discard all queued queries. @return how many were removed */
+	public static int clearBacklog() {
+		int n = 0;
+		synchronized (fifo) {
+			while( fifo.getSize() > 0 ) {
+				try {
+					fifo.remove();
+				} catch(InterruptedException ex) {
+					break;
+				}
+				n++;
+			}
+		}
+		return n;
+	}
+
+	/** Queries refused because the backlog was full. */
+	public static long getDropped() {
+		return dropped.get();
+	}
+
+	/** Queries answered with SERVFAIL because resolution failed or threw. */
+	public static long getFailed() {
+		return failed.get();
+	}
+
+	/**
+	 * A response to 'query' with no data and the given RCODE (e.g. SERVFAIL):
+	 * same ID, opcode, RD and question as the request, QR=1, RA=1, AA=0.
+	 */
+	public static Message failure(QueryData query, int rcode) {
+		Message req = query.getMessage();
+		Message ret = new Message();
+		us.bringardner.net.dns.Header h = req.getHeader().copy();
+		h.setAA(false);
+		h.setTC(false);
+		h.setRA(true);
+		ret.setHeader(h);
+		ret.setMessageTypeResponse();
+		ret.setResponseCode(rcode);
+		//  The question as the client sent it (QueryData's may have followed a CNAME)
+		Section q = req.getFirstQuestion() != null ? req.getFirstQuestion() : query.getQuestion();
+		if( q != null ) {
+			ret.setQuestion(new Section(q));
+		}
+		return ret;
 	}
 	
 	public static int backlog() {
@@ -118,15 +185,23 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 				setState("Returned on fifo");
 				if( running && question != null ) {
 					setState("Call Resolver:"+question);
-					us.bringardner.net.dns.Message msg = Resolver.resolve(question.getQuestion());
-					setState("Returned from resolver");	
-					if( msg != null ) {
-						sendResponse(msg,question);
+					Message msg = null;
+					try {
+						msg = Resolver.resolve(question.getQuestion());
+					} catch(RuntimeException | StackOverflowError ex) {
+						logError("Resolver failed for "+question.getQuestion(), ex);
 					}
+					setState("Returned from resolver");
+					if( msg == null ) {
+						//  No answer (all servers timed out, no servers, or an error):
+						//  tell the client instead of leaving it to time out.
+						failed.incrementAndGet();
+						msg = failure(question, DNS.SERVER_ERROR);
+					}
+					sendResponse(msg,question);
 				}
 			} catch(Exception ex) {
-
-				//  ignore them
+				logError("Unexpected error in resolver thread", ex);
 			}
 		}
 
