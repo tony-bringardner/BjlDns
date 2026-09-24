@@ -39,6 +39,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import us.bringardner.net.dns.Cname;
 import us.bringardner.net.dns.DNS;
@@ -63,12 +65,14 @@ public class Resolver  extends DnsBaseClass
 	//  This is created ahead of time in case we're out of memory & want to reset things
 	private static volatile Cache safty = new Cache();
 
-	private static List<RemoteServer> sbelt = new ArrayList<RemoteServer>();
+	private static final List<RemoteServer> sbelt = new CopyOnWriteArrayList<RemoteServer>();
 	//  this is used to 'round robin' the starting server	
 	//  so that we don't always use the same one (spread the load)
 	//private static int current=0;
 	//private static int sbeltSize;
-	private static Map<String,List<RemoteServer>> servers = new HashMap<String, List<RemoteServer>>();
+	//  Delegations learned while resolving: lower case zone name -> servers.
+	//  Written by all ResolverThreads, so concurrent map + copy-on-write lists.
+	private static volatile Map<String,List<RemoteServer>> servers = new ConcurrentHashMap<String, List<RemoteServer>>();
 	private static ResolverThread [] resolvers;
 	private static int started = 0;
 	private static int completed = 0;
@@ -78,13 +82,10 @@ public class Resolver  extends DnsBaseClass
 	private static double timeAccum = 0.0;
 
 	private static void addServer(RemoteServer svr) {
-		if( svr != null ) {
-			List<RemoteServer> al = (List<RemoteServer>)servers.get(svr.getName());
-			if( al == null ) {
-				al = new ArrayList<RemoteServer>();
-				servers.put(svr.getName(),al);
-			}
-			al.add(svr);
+		//  getName() is null when the referral had no NS records
+		if( svr != null && svr.getName() != null ) {
+			//  Keys are lower case: getServers() looks up the lower case question name
+			servers.computeIfAbsent(svr.getName().toLowerCase(), k -> new CopyOnWriteArrayList<RemoteServer>()).add(svr);
 		}
 	}
 	
@@ -93,11 +94,11 @@ public class Resolver  extends DnsBaseClass
 		return ret;
 	}
 	
-	public static int getAve() {
+	public static synchronized int getAve() {
 		return ave;
 	}
 	
-	public static int getCompleted() {
+	public static synchronized int getCompleted() {
 		return completed;
 	}
 
@@ -111,11 +112,11 @@ public class Resolver  extends DnsBaseClass
 	}	
 	 */
 
-	public static int getMax()	{
+	public static synchronized int getMax()	{
 		return max;
 	}
 
-	public static int getMin()	{
+	public static synchronized int getMin()	{
 		return min;
 	}
 
@@ -162,7 +163,7 @@ public class Resolver  extends DnsBaseClass
 		return ret;
 	}
 
-	public static int getStarted()	{
+	public static synchronized int getStarted()	{
 		return started;
 	}
 
@@ -368,7 +369,7 @@ public class Resolver  extends DnsBaseClass
 		cache = safty;
 		System.gc();
 		safty = new Cache();
-		servers = new HashMap<String,List<RemoteServer>>();
+		servers = new ConcurrentHashMap<String,List<RemoteServer>>();
 	}
 	/**
 	 * Attempt to get an answer to a question

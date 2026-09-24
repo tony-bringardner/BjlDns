@@ -55,6 +55,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Properties;
+import java.util.concurrent.ConcurrentHashMap;
 
 import javax.net.ServerSocketFactory;
 
@@ -124,14 +125,14 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 
 	private static ServerSocketFactory serverSocketFactory=ServerSocketFactory.getDefault();
-	private static int adminPort = 9999;
-	private static boolean shutdown = false;
-	private static boolean _debug = true;
+	private static volatile int adminPort = 9999;
+	private static volatile boolean shutdown = false;
+	private static volatile boolean _debug = true;
 	private boolean standAlone=false;
 	private java.util.Date startTime = new java.util.Date();
 
 	//  Recursion Available
-	private boolean recursionAvailable = true;
+	private volatile boolean recursionAvailable = true;
 
 
 	private Thread thread;	
@@ -168,9 +169,18 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	// These servers are used to forward requests
 	//private ArrayList forwarders;
 
-	private Map<String, String> common = new HashMap<String, String>();
+	//  lower case domain -> domain. Read by query threads, written by admin threads.
+	private final Map<String, String> common = new ConcurrentHashMap<String, String>();
 
-	private Map<String, List<A>> dynamic = new HashMap<String, List<A>>();
+	/**
+	 * Dynamic A records: lower case name -> unmodifiable list holding one A.
+	 * Read by query threads, written by admin threads and the DB/file reload.
+	 * The A objects are never modified after they are published; an address
+	 * change replaces the entry (see putDynamic).
+	 */
+	private final Map<String, List<A>> dynamic = new ConcurrentHashMap<String, List<A>>();
+	//  Serializes check-then-act updates of dynamic entries
+	private final Object dynamicLock = new Object();
 
 	//  Timeout for admin cycles
 	private long acceptTimeout = 60000; //  one minute
@@ -181,7 +191,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	private int UDPProcCount = 10;
 	private UDPProsessor [] UDPProcs;
 
-	private boolean running = false;
+	private volatile boolean running = false;
 
 	private int TCPProcCount = 4;	
 	private TCPProsessor [] TCPProcs;
@@ -202,7 +212,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	/**
 	 * Add a domain to our domain list
 	 **/
-	public synchronized void addDomain(String domain) {
+	public void addDomain(String domain) {
 		common.put(domain.toLowerCase(),domain);
 	}
 
@@ -589,7 +599,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 				while( rs.next() ) {
 					String name = rs.getString(1);
-					common.put(name,name);
+					common.put(name.toLowerCase(),name);
 					log("Install common domain ="+name);
 
 				}
@@ -638,25 +648,25 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 */
 
 	public void addOrUpdateDynamic(String name, String ip) throws ClassNotFoundException, SQLException {
-		A a = null;
-		List<A> dyn = getDynamic(name);
-
-		if(dyn == null ) {
-			a =	addDynamic(name, ip);
-			if( a == null ) {
-				logError("-Undefined domain for "+name);
-				return;
+		synchronized (dynamicLock) {
+			List<A> dyn = getDynamic(name);
+			if(dyn == null ) {
+				A a =	addDynamic(name, ip);
+				if( a == null ) {
+					logError("-Undefined domain for "+name);
+					return;
+				} else {
+					createDynamic(name,ip);
+					return;
+				}
 			} else {
-				createDynamic(name,ip);
-				return;
+				A a = dyn.get(0);
+				String old = a.getAddressString();
+				if( !ip.equals(old)) {
+					replaceDynamicAddress(a, ip);
+				}
 			}
-		} else {
-			a = (A)dyn.get(0);
-			String old = a.getAddressString();    		
-			if( !ip.equals(old)) {
-				a.setAddress(ip);
-			}
-		} 
+		}
 		// Keep track of the last time we were contacted
 		saveDynamic(name,ip,STATUS_ACTIVE);
 
@@ -734,17 +744,19 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				while(rs.next()) {
 					String name = rs.getString(1);
 					String ip = rs.getString(2);
-					List<A> dyn = getDynamic(name);
-					if( dyn != null ) {
-						A a = (A)dyn.get(0);
-						String old = a.getAddressString();    		
-						if( !ip.equals(old)) {
-							a.setAddress(ip);
+					synchronized (dynamicLock) {
+						List<A> dyn = getDynamic(name);
+						if( dyn != null ) {
+							A a = dyn.get(0);
+							String old = a.getAddressString();
+							if( !ip.equals(old)) {
+								replaceDynamicAddress(a, ip);
+								ret = true;
+							}
+						} else {
+							addDynamic(name,ip);
 							ret = true;
 						}
-					} else {
-						addDynamic(name,ip);
-						ret = true;
 					}
 					log("Dynamic "+name+" "+ip+" ret="+ret);
 				}
@@ -1038,7 +1050,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	/**
 	 * Delete a domain from our domain list
 	 **/
-	public synchronized Object removeDomain(String domain) {
+	public Object removeDomain(String domain) {
 		return common.remove(domain.toLowerCase());
 	}
 
@@ -1499,17 +1511,35 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 	}
 
+	/** @return a snapshot copy of the dynamic entries (lower case name -> [A]) */
 	public Map<String, List<A>> getDynamic() {
-		Map<String, List<A>> ret = new HashMap<String, List<A>>();
-		for(String name: dynamic.keySet()) {
-			ret.put(name, dynamic.get(name));
-		}
-		return ret;
+		return new HashMap<String, List<A>>(dynamic);
+	}
+
+	/** Dynamic names are case-insensitive (the query path looks them up in lower case). */
+	private static String dynamicKey(String name) {
+		return name.toLowerCase();
 	}
 
 	public List<A> getDynamic(String name) {
-		List<A> ret = dynamic.get(name);
-		return ret;
+		return dynamic.get(dynamicKey(name));
+	}
+
+	/** Publish a fully built A as the dynamic entry for its name. */
+	private void putDynamic(A a) {
+		dynamic.put(dynamicKey(a.getName()), Collections.singletonList(a));
+	}
+
+	/**
+	 * Change a dynamic address by publishing a new A (the old object may be
+	 * in use by a query thread and is never modified).
+	 */
+	private A replaceDynamicAddress(A old, String ip) {
+		A a = new A(old.getName());
+		a.setAddress(ip);
+		a.setTTL(old.getTTL());
+		putDynamic(a);
+		return a;
 	}
 
 	/**
@@ -1532,9 +1562,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			ret = new A(name);
 			ret.setAddress(addr);
 			ret.setTTL(zone.getSoa().getTTL());
-			List<A> list = new ArrayList<A>();
-			list.add(ret);
-			dynamic.put(name, list);
+			putDynamic(ret);
 		}
 
 		return ret;
@@ -1567,7 +1595,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	}
 
 	public void removeDynamic(String name) throws IOException  {
-		List<A> list = dynamic.remove(name);
+		List<A> list = dynamic.remove(dynamicKey(name));
 
 		if( list != null) {
 			A a = list.get(0);

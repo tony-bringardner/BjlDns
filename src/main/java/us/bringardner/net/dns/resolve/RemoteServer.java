@@ -25,10 +25,11 @@
  */
 package us.bringardner.net.dns.resolve;
 
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import us.bringardner.net.dns.A;
 import us.bringardner.net.dns.DNS;
@@ -49,12 +50,13 @@ import us.bringardner.net.dns.server.DnsServer;
 public class RemoteServer  extends DnsBaseClass {
 	private String nameStr;
 	private Name name;
-	private List<ServerA> addr;
+	private final List<ServerA> addr = new CopyOnWriteArrayList<ServerA>();
 	//private long lastUsed;
 	// a stating point for iteration
-	private int pos=0; 
+	//  Rotates the starting address between queries (shared by resolver threads)
+	private final AtomicInteger pos = new AtomicInteger();
 	public RemoteServer() {
-		addr = new ArrayList<ServerA>();
+
 		//lastUsed = System.currentTimeMillis();
 	}
 
@@ -130,10 +132,9 @@ public class RemoteServer  extends DnsBaseClass {
 	}
 
 	public Iterator<ServerA> iterator() {
-		if( pos >= addr.size() ) {
-			pos = 0;
-		}
-		return new ServerIterator(addr,pos++);
+		int size = addr.size();
+		int start = size == 0 ? 0 : Math.floorMod(pos.getAndIncrement(), size);
+		return new ServerIterator(addr,start);
 	}
 
 
