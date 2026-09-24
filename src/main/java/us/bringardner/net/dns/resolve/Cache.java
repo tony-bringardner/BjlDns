@@ -39,6 +39,7 @@ import us.bringardner.net.dns.Header;
 import us.bringardner.net.dns.Message;
 import us.bringardner.net.dns.RR;
 import us.bringardner.net.dns.Section;
+import us.bringardner.net.dns.Soa;
 
 /**
  * Resolver cache.
@@ -68,6 +69,8 @@ public class Cache extends DnsBaseClass
 	/** Absolute cap on how long anything is cached (ms), regardless of TTL. */
 	private static volatile long defaultMaxAge = 1000*60*30;
 	private static volatile int defaultMaxEntries = 10000;
+	/** Upper bound for negative caching (seconds). RFC 2308 section 5 suggests 1-3 hours. */
+	private static volatile long maxNegativeTtl = 3*60*60;
 
 	/**
 	 * Immutable snapshot of one response. Lists are unmodifiable and the
@@ -137,28 +140,42 @@ public class Cache extends DnsBaseClass
 		if( question == null ) {
 			return null;
 		}
-		String key = getKey(question);
 		long now = clock.getAsLong();
 		Entry e;
 		synchronized (this) {
-			e = cache.get(key);
-			if( e != null && e.isExpired(now) ) {
-				cache.remove(key);
-				e = null;
+			e = live(getKey(question), now);
+			if( e == null ) {
+				//  A cached NXDOMAIN answers every type for the name (RFC 2308 section 5)
+				e = live(getNxKey(question), now);
 			}
 		}
-		return e == null ? null : toMessage(e, now);
+		return e == null ? null : toMessage(e, question, now);
+	}
+
+	/** Entry for key if present and not expired (expired entries are removed). Caller holds the lock. */
+	private Entry live(String key, long now) {
+		Entry e = cache.get(key);
+		if( e != null && e.isExpired(now) ) {
+			cache.remove(key);
+			e = null;
+		}
+		return e;
 	}
 
 	/**
 	 * Cache this response. The message is deep-copied; later changes to
 	 * msg by the caller do not affect the cache.
 	 * <p>
-	 * Not cached: null, no question, no answers (negative caching is not
-	 * done yet), or any answer with a TTL of 0 (RFC 1035: do not cache).
+	 * Responses without answers go to putNegative() (RFC 2308).
+	 * Not cached: null, no question, or any answer with a TTL of 0
+	 * (RFC 1035: do not cache).
 	 */
 	public void put(Message msg) {
-		if( msg == null || msg.getQuestionCount() == 0 || msg.getAnswerCount() == 0 ) {
+		if( msg == null || msg.getQuestionCount() == 0 ) {
+			return;
+		}
+		if( msg.getAnswerCount() == 0 ) {
+			putNegative(msg);
 			return;
 		}
 
@@ -188,15 +205,78 @@ public class Cache extends DnsBaseClass
 		String key = getKey(msg.getFirstQuestion());
 		synchronized (this) {
 			cache.put(key,e);
+			//  The name exists now; forget any NXDOMAIN for it
+			cache.remove(getNxKey(msg.getFirstQuestion()));
 		}
 	}
 
-	/** Build a fresh Message from an entry with TTLs adjusted to the time remaining. */
-	private static Message toMessage(Entry e, long now) {
+	/**
+	 * Negative caching (RFC 2308).
+	 * <ul>
+	 * <li>NXDOMAIN: cached for the name, any type.</li>
+	 * <li>NODATA (NOERROR, no answers): cached for the name and type.</li>
+	 * <li>Only when the authority section has an SOA (section 5: responses
+	 *     without one SHOULD NOT be cached); a referral (NS, no SOA) is not
+	 *     negative and is not cached.</li>
+	 * <li>TTL = min(SOA TTL, SOA MINIMUM), capped by maxNegativeTtl and
+	 *     defaultMaxAge. The stored SOA's TTL is set to it so responses show
+	 *     the time remaining.</li>
+	 * <li>Other RCODEs (SERVFAIL, REFUSED...) are not cached.</li>
+	 * </ul>
+	 */
+	private void putNegative(Message msg) {
+		int rcode = msg.getResponseCode();
+		boolean nxdomain = rcode == DNS.NAME_ERROR;
+		if( !nxdomain && rcode != DNS.NOERROR ) {
+			return;
+		}
+		Soa soa = null;
+		for(RR rr : msg.getAuthority()) {
+			if( rr instanceof Soa ) {
+				soa = (Soa)rr;
+				break;
+			}
+		}
+		if( soa == null ) {
+			return;
+		}
+
+		long minimum = soa.getMinimum() < 0 ? 0 : soa.getMinimum();
+		long negTtl = Math.min(Math.min(ttlOf(soa), minimum), maxNegativeTtl);
+		long life = Math.min(negTtl * 1000L, defaultMaxAge);
+		if( negTtl <= 0 || life <= 0 ) {
+			return;
+		}
+
+		RR soaCopy = soa.copy();
+		soaCopy.setTTL((int)negTtl);
+
+		long now = clock.getAsLong();
+		Entry e = new Entry(
+				msg.getHeader().copy(),
+				new Section(msg.getFirstQuestion()),
+				Collections.<RR>emptyList(),
+				Collections.singletonList(soaCopy),
+				Collections.<RR>emptyList(),
+				now,
+				now + life);
+
+		Section q = msg.getFirstQuestion();
+		String key = nxdomain ? getNxKey(q) : getKey(q);
+		synchronized (this) {
+			cache.put(key,e);
+		}
+	}
+
+	/**
+	 * Build a fresh Message from an entry with TTLs adjusted to the time remaining.
+	 * The question is the one asked (an NXDOMAIN entry answers any type).
+	 */
+	private static Message toMessage(Entry e, Section asked, long now) {
 		long elapsedSec = (now - e.storedAt) / 1000L;
 		Message ret = new Message();
 		ret.setHeader(e.header.copy());
-		ret.setQuestion(new Section(e.question));
+		ret.setQuestion(new Section(asked));
 		for(RR rr : e.answer) {
 			RR c = copyWithRemainingTtl(rr, elapsedSec, now);
 			if( c != null ) {
@@ -289,6 +369,20 @@ public class Cache extends DnsBaseClass
 	 */
 	public static String getKey(Section question) {
 		return question.getName().toLowerCase()+'|'+question.getType()+'|'+question.getDnsClass();
+	}
+
+	/** Key of a cached NXDOMAIN: name and class, any type. */
+	static String getNxKey(Section question) {
+		return question.getName().toLowerCase()+"|NX|"+question.getDnsClass();
+	}
+
+	public static long getMaxNegativeTtl() {
+		return maxNegativeTtl;
+	}
+
+	/** @param seconds upper bound for how long negative answers are cached */
+	public static void setMaxNegativeTtl(long seconds) {
+		maxNegativeTtl = seconds;
 	}
 
 	/** Remove all entries whose TTL has run out. @return number removed */
