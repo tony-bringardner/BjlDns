@@ -109,6 +109,15 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	/** Address the admin port listens on. Default: loopback only. Use 0.0.0.0 for all interfaces. */
 	public static final String PROP_ADMIN_BIND_ADDRESS = "JDns.adminBindAddress";
 	public static final String PROP_JDBC_URL = "JDns.jdbcURL";
+	/**
+	 * Shared secret for the admin port (challenge-response, see AdminAuth).
+	 * Without it only clients on this machine may use the admin port.
+	 */
+	public static final String PROP_ADMIN_SECRET = "JDns.adminSecret";
+	/** Most admin sessions at once (default 8). */
+	public static final String PROP_ADMIN_MAX_CONNECTIONS = "JDns.adminMaxConnections";
+	/** An idle admin session is closed after this many ms (default 600000). */
+	public static final String PROP_ADMIN_IDLE_TIMEOUT = "JDns.adminIdleTimeout";
 
 
 
@@ -137,6 +146,9 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	private static volatile int adminPort = 9999;
 	//  Where the admin port listens (set in initServer, default loopback)
 	private volatile InetAddress adminBindAddress = InetAddress.getLoopbackAddress();
+	//  Limits concurrent admin sessions (each had its own unbounded thread)
+	private volatile java.util.concurrent.Semaphore adminSlots = new java.util.concurrent.Semaphore(8);
+	private volatile int adminIdleTimeout = 10*60*1000;
 	//  UDP/TCP processor threads started by initServer (for stopAndWait)
 	private final List<Thread> workers = new java.util.concurrent.CopyOnWriteArrayList<Thread>();
 	private static volatile boolean shutdown = false;
@@ -476,6 +488,12 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		if( (tmp=stringProperty(PROP_ADMIN_BIND_ADDRESS)) != null) {
 			adminBindAddress = createBindAddress(tmp);
 		}
+		adminSlots = new java.util.concurrent.Semaphore(Math.max(1, intProperty(PROP_ADMIN_MAX_CONNECTIONS, 8)));
+		adminIdleTimeout = intProperty(PROP_ADMIN_IDLE_TIMEOUT, adminIdleTimeout);
+		if( stringProperty(PROP_ADMIN_SECRET) == null && !adminBindAddress.isLoopbackAddress() ) {
+			logError("Admin port listens on "+adminBindAddress+" but "+PROP_ADMIN_SECRET
+					+" is not set: only clients on this machine will be accepted");
+		}
 
 		log("JDns Server init Complete");
 	}  
@@ -513,7 +531,50 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	}
 
 	/**
-	 * Open the admin listener on adminPort / adminBindAddress. It used to
+	 * Start an admin session for an accepted connection, or turn it away if
+	 * JDns.adminMaxConnections sessions are already open.
+	 * @return true if a session was started
+	 */
+	boolean handleAdminConnection(Socket clientSocket) {
+		final java.util.concurrent.Semaphore slots = adminSlots;
+		if( !slots.tryAcquire() ) {
+			log("Refused admin connection from "+clientSocket.getInetAddress()+": too many admin sessions");
+			try {
+				clientSocket.getOutputStream().write("-Too many admin connections\r\n".getBytes());
+				clientSocket.close();
+			} catch(IOException ex) {
+			}
+			return false;
+		}
+		try {
+			DnsAdminProcessor admin = new DnsAdminProcessor(this,clientSocket);
+			admin.setTimeout(adminIdleTimeout);
+			admin.setOnFinish(slots::release);
+			admin.start();
+			return true;
+		} catch(IOException | RuntimeException ex) {
+			slots.release();
+			log("Can't start admin session",ex);
+			try {
+				clientSocket.close();
+			} catch(IOException e) {
+			}
+			return false;
+		}
+	}
+
+	/** Set the most admin sessions at once (initServer reads JDns.adminMaxConnections). */
+	void setAdminMaxConnections(int max) {
+		adminSlots = new java.util.concurrent.Semaphore(Math.max(1, max));
+	}
+
+	/** Admin sessions that can still be opened. */
+	public int getAvailableAdminSlots() {
+		return adminSlots.availablePermits();
+	}
+
+	/**
+	 * Open the admin listener on adminPort / adminBindAddress.It used to
 	 * listen on every interface regardless of the DNS bind address.
 	 */
 	ServerSocket createAdminSocket() throws IOException {
@@ -1180,8 +1241,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				setState("Waiting for admin connection");
 				Socket clientSocket = svrSock.accept();
 				if( clientSocket != null ) {
-					DnsAdminProcessor admin = new DnsAdminProcessor(this,clientSocket);
-					admin.start();
+					handleAdminConnection(clientSocket);
 					setState("Processing conneciton");
 				}
 
