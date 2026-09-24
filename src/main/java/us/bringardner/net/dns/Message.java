@@ -38,14 +38,13 @@ import java.net.InetAddress;
 import java.net.Socket;
 import java.net.SocketException;
 import java.net.UnknownHostException;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
-import us.bringardner.core.BjlLogger;
-import us.bringardner.core.ILogger;
 import us.bringardner.core.ILogger.Level;
 
 /**
@@ -54,6 +53,8 @@ import us.bringardner.core.ILogger.Level;
 public class Message extends Utility {
 	private long initTime;
 	private boolean udp   = true;;
+	//  Retry over TCP when a UDP answer comes back truncated (TC)
+	private boolean tcpFallback = true;
 	private boolean defname   = false;
 	private int qtype = A;
 	private int dnsClass = IN;
@@ -98,6 +99,7 @@ public class Message extends Utility {
 		ret.udp = udp;
 		ret.port = port;
 		ret.retry = retry;
+		ret.tcpFallback = tcpFallback;
 		ret.server = server;
 		ret.svrAddress = svrAddress;
 		ret.setLogger(getLogger());
@@ -879,7 +881,7 @@ TC              TrunCation - specifies that this message was truncated
 	}
 
 	public Message queryTCP(InetAddress svr) throws IOException , InterruptedIOException {
-		//boolean done = false;
+		int id = newQueryId();
 		byte [] data = toByteArray();
 
 		for(int i=0; i< retry; i++ ) {
@@ -887,6 +889,7 @@ TC              TrunCation - specifies that this message was truncated
 
 				byte [] sz = new byte[2];
 				setShort(sz,0,(short)data.length);
+				byte [] resp = null;
 				Socket sock = new Socket(svr,port);
 				try {
 					sock.setSoTimeout(timeOut);
@@ -901,14 +904,26 @@ TC              TrunCation - specifies that this message was truncated
 
 					int len = makeShort(sz[0], sz[1]);
 
-					data = new byte[len];
+					//  Separate buffer: the old code overwrote 'data' with the
+					//  response, so a retry re-sent the previous response.
+					resp = new byte[len];
 
-					readArray(in,data);
+					readArray(in,resp);
 
 				}finally {
 					sock.close();
 				}
-				return new Message(new ByteBuffer(data));
+
+				Message ret = null;
+				try {
+					ret = new Message(new ByteBuffer(resp));
+				} catch(RuntimeException ex) {
+					throw new IOException("Malformed response from "+svr+": "+ex.getMessage(), ex);
+				}
+				if( !isResponseTo(ret,id) ) {
+					throw new IOException("Response from "+svr+" does not match the query (ID/question)");
+				}
+				return ret;
 			} catch(InterruptedIOException ex) {}
 		}
 		throw new InterruptedIOException("Timed out "+retry+" times");
@@ -922,7 +937,22 @@ TC              TrunCation - specifies that this message was truncated
 		return queryUDP(svrAddress);
 	}
 
+	/**
+	 * Send this query over UDP and wait for a matching response.
+	 * <p>
+	 * Spoofing / cache poisoning defences (RFC 5452):
+	 * <ul>
+	 * <li>a new random 16 bit ID (SecureRandom) for every query,</li>
+	 * <li>a new socket for every query, so the OS picks a random source port,</li>
+	 * <li>a response is accepted only if it comes from the server's address
+	 *     and port, is a response (QR=1), has our ID and repeats our question
+	 *     (name case-insensitive, type and class).</li>
+	 * </ul>
+	 * Anything else (including late answers to an earlier query and malformed
+	 * packets) is ignored and we keep waiting until the timeout.
+	 */
 	public Message queryUDP(InetAddress server) throws InterruptedIOException , UnknownHostException,IOException , SocketException {
+		int id = newQueryId();
 		byte [] data = toByteArray();
 		if( data.length > MAXUDPLEN ) {
 			truncateOn();
@@ -933,46 +963,157 @@ TC              TrunCation - specifies that this message was truncated
 		}
 
 		DatagramPacket pckt = new DatagramPacket(data,dataSize,server, port);
-		byte [] buf = new byte[MAXUDPLEN];
-		DatagramPacket recPckt = null;
-		boolean done = false;
+		Message ret = null;
+		int rejected = 0;
 		DatagramSocket sock = new DatagramSocket();
 		try {
-			sock.setSoTimeout(timeOut);
+			for(int i=0; i<retry && ret == null; i++ ) {
+				sock.send(pckt);
+				long deadline = System.currentTimeMillis()+timeOut;
+				while( ret == null ) {
+					long remaining = deadline - System.currentTimeMillis();
+					if( remaining <= 0 ) {
+						break;
+					}
+					sock.setSoTimeout((int)remaining);
+					byte [] buf = new byte[MAXUDPLEN];
+					DatagramPacket recPckt = new DatagramPacket(buf,buf.length);
+					try {
+						sock.receive(recPckt);
+					} catch(InterruptedIOException ex) {
+						break;
+					}
 
-			for(int i=0; i<retry && !done; i++ ) {
-				try {
-					sock.send(pckt);
-					recPckt = new DatagramPacket(buf,buf.length);
-					sock.receive(recPckt);
-					done = true;
-				} catch(InterruptedIOException ex) {
+					//  Must come from the address and port we sent to
+					if( !server.equals(recPckt.getAddress()) || recPckt.getPort() != port ) {
+						rejected++;
+						continue;
+					}
+
+					Message m = null;
+					try {
+						//  Parse only the bytes received
+						m = new Message(new ByteBuffer(java.util.Arrays.copyOf(buf, recPckt.getLength())));
+					} catch(RuntimeException ex) {
+						rejected++;
+						continue;
+					}
+
+					if( isResponseTo(m,id) ) {
+						ret = m;
+					} else {
+						rejected++;
+					}
 				}
 			}
 		} finally {
 			sock.close();
 		}
-		if( !done ) {
+
+		if( rejected > 0 ) {
+			logDebug("Ignored "+rejected+" unexpected/mismatched UDP packet(s) while querying "+server+":"+port+" for "+getFirstQuestion());
+		}
+
+		if( ret == null ) {
 			throw new InterruptedIOException("Received Time Out "+retry+" times");
 		}
 		if( isDebugEnabled() ) {
-			logDebug("\nReceive Buffer Debug info:");
-			byte [] d = recPckt.getData();
-			logDebug("Data length="+d.length);
-			ByteBuffer b = new ByteBuffer(d);
-			ILogger logger = getLogger();
-			if (logger instanceof BjlLogger	) {
-				BjlLogger l = (BjlLogger) logger;
-				b.dump(l.getOut());
-			} else {
-				b.dump();
-			}
-			
-			Message tm = new Message(b);
-			logDebug("msg = "+tm);
-			logDebug("End Receive Buffer Debug info:\n");
+			logDebug("msg = "+ret);
 		}
-		return new Message(new ByteBuffer(recPckt.getData()));
+		if( ret.isTruncated() && tcpFallback ) {
+			//  The answer didn't fit in UDP; get the whole thing over TCP
+			//  (RFC 1035 4.2.1) instead of using / caching a partial answer.
+			logDebug("Truncated UDP answer from "+server+" for "+getFirstQuestion()+", retrying over TCP");
+			return queryTCP(server);
+		}
+		return ret;
+	}
+
+	/** @return true if queryUDP() retries over TCP when the answer is truncated (default true) */
+	public boolean isTcpFallback() {
+		return tcpFallback;
+	}
+
+	public void setTcpFallback(boolean tcpFallback) {
+		this.tcpFallback = tcpFallback;
+	}
+
+	/**
+	 * Serialize for a transport that carries at most maxLen bytes, e.g. a UDP
+	 * response (RFC 1035 4.2.1, RFC 2181 9):
+	 * <ol>
+	 * <li>the whole message, if it fits;</li>
+	 * <li>otherwise without the additional section; TC is not set because
+	 *     the answer itself is complete;</li>
+	 * <li>otherwise only the header and question with TC set, so the client
+	 *     retries over TCP.</li>
+	 * </ol>
+	 * This message is not modified (it may be shared, e.g. from a cache).
+	 */
+	public byte [] toByteArray(int maxLen) {
+		byte [] full = sectionsCopy(true,true,true).toByteArray();
+		if( full.length <= maxLen ) {
+			return full;
+		}
+		byte [] noAdditional = sectionsCopy(true,true,false).toByteArray();
+		if( noAdditional.length <= maxLen ) {
+			return noAdditional;
+		}
+		Message tc = sectionsCopy(false,false,false);
+		tc.hdr.setTC(true);
+		return tc.toByteArray();
+	}
+
+	/** A shallow copy of header, question and the selected sections (for serializing). */
+	private Message sectionsCopy(boolean answer, boolean authority, boolean additional) {
+		Message m = new Message();
+		m.hdr = hdr.copy();
+		m.que = new ArrayList<Section>(que);
+		if( answer ) {
+			m.ans = new ArrayList<RR>(ans);
+		}
+		if( authority ) {
+			m.ath = new ArrayList<RR>(ath);
+		}
+		if( additional ) {
+			m.add = new ArrayList<RR>(add);
+		}
+		return m;
+	}
+
+	private static final SecureRandom ID_RANDOM = new SecureRandom();
+
+	/**
+	 * Give this query a new unpredictable 16 bit ID (RFC 5452 section 9.2).
+	 * @return the ID
+	 */
+	private int newQueryId() {
+		int id = ID_RANDOM.nextInt(0x10000);
+		hdr.setID(id);
+		return id;
+	}
+
+	/**
+	 * Does 'response' answer this query (sent with transaction ID 'id')?
+	 * It must be a response with the same ID and the same question (name
+	 * compared case-insensitively, type and class). A response without a
+	 * question section is only accepted if it reports an error.
+	 */
+	public boolean isResponseTo(Message response, int id) {
+		if( response == null || !response.isResponse() || response.getID() != id ) {
+			return false;
+		}
+		Section mine = getFirstQuestion();
+		if( mine == null ) {
+			return true;
+		}
+		Section theirs = response.getFirstQuestion();
+		if( theirs == null ) {
+			return response.getResponseCode() != NOERROR;
+		}
+		return mine.getType() == theirs.getType()
+				&& mine.getDnsClass() == theirs.getDnsClass()
+				&& mine.getName().equalsIgnoreCase(theirs.getName());
 	}
 
 	public Iterator<Section> question () {

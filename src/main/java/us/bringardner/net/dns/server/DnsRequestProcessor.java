@@ -41,49 +41,17 @@ public abstract class DnsRequestProcessor  extends DnsBaseClass implements DNS
  * Process an incoming request (Search for the query then call sendResponse).
  **/
  public void process(QueryData query) {
-
-	int tryCnt = 0;
-	boolean done = false;
-	setState("Processing Message Begin");
-	while ( !done ) {
-		try {
-			setState("Processing Message before query tryCnt="+tryCnt);
-			String name = query.getQuestion().getName();
-			setState("Processing Message before query tryCnt="+tryCnt+" with name="+name);
-			List<Message> reply = server.query(query);
-			if( reply != null ) {
-				int sz = reply.size();
-				setState("Processing Message after query sz="+sz);
-
-				for(int i=0; i< sz ; i++ ) {
-					setState("Processing Message before sendResponse i="+i);
-					sendResponse((Message)reply.get(i));
-					setState("Processing Message after sendResponse i="+i);
-				}
-			}
-			done = true;
-		} catch(OutOfMemoryError ex) {
-			setState("Processing Message OutOfMEmory tryCnt="+tryCnt);			
-			tryCnt++;
-			switch(tryCnt) {
-				case 1:	setState("Processing Message Before RemoveOld tryCnt="+tryCnt);
-						us.bringardner.net.dns.resolve.Resolver.removeOld();
-						setState("Processing Message After RemoveOld tryCnt="+tryCnt);
-						break;
-				case 2: setState("Processing Message Before RemoveOld tryCnt="+tryCnt);
-						us.bringardner.net.dns.resolve.Resolver.removeOld();
-						setState("Processing Message After RemoveOld tryCnt="+tryCnt);
-						break;
-				default:
-						setState("Processing Message Calling Exit! tryCnt="+tryCnt);
-						System.exit(1);
-			}
+	//  No OutOfMemoryError handling here any more: the old code trimmed the
+	//  cache, retried, and finally called System.exit(1) from this thread.
+	//  Caches are bounded now; a JVM error propagates to FatalErrorHandler.
+	setState("Processing Message begin");
+	List<Message> reply = server.query(query);
+	if( reply != null ) {
+		for(Message m : reply) {
+			sendResponse(m);
 		}
 	}
-
 	setState("Processing Message Complete");
-			
-	 
  }
 /**
  * Insert the method's description here.

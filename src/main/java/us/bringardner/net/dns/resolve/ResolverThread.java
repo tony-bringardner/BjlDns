@@ -39,8 +39,9 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 {
 	private static final String PROP_RESOLVER_BACKLOG = "Resolver.maxBacklog";
 	private static SimpleObjectFIFO fifo;
-	private Thread thread;
-	private boolean running = false;
+	private volatile Thread thread;
+	//  Set to false by stop() from another thread
+	private volatile boolean running = false;
 
 
 	private DatagramSocket sock;
@@ -57,12 +58,117 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 		sock = us.bringardner.net.dns.server.UDPProsessor.getSock();
 	}
 	
-	public static void addQuery(QueryData query) {
+	//  Counters for getStats()
+	private static final java.util.concurrent.atomic.AtomicLong dropped = new java.util.concurrent.atomic.AtomicLong();
+	private static final java.util.concurrent.atomic.AtomicLong failed = new java.util.concurrent.atomic.AtomicLong();
+
+	/**
+	 * Queue a recursive query for a resolver thread.
+	 * 
+	 * @return false if it could not be queued (backlog full). The caller must
+	 * then answer the client itself (SERVFAIL); it used to be dropped silently
+	 * and the client waited for its own timeout.
+	 */
+	public static boolean addQuery(QueryData query) {
+		boolean ret = false;
 		try {
-			if( !fifo.isFull() ) {
-				fifo.add(query);
+			synchronized (fifo) {
+				if( !fifo.isFull() ) {
+					fifo.add(query);
+					ret = true;
+				}
 			}
 		} catch(Exception ex) {}
+		if( !ret ) {
+			dropped.incrementAndGet();
+		}
+		return ret;
+	}
+
+	/** Discard all queued queries. @return how many were removed */
+	public static int clearBacklog() {
+		int n = 0;
+		synchronized (fifo) {
+			while( fifo.getSize() > 0 ) {
+				try {
+					fifo.remove();
+				} catch(InterruptedException ex) {
+					break;
+				}
+				n++;
+			}
+		}
+		return n;
+	}
+
+	/** Queries refused because the backlog was full. */
+	public static long getDropped() {
+		return dropped.get();
+	}
+
+	/** Queries answered with SERVFAIL because resolution failed or threw. */
+	public static long getFailed() {
+		return failed.get();
+	}
+
+	/**
+	 * One response for a CNAME chain from our zones that points outside them:
+	 * the question and CNAME records of 'partial' followed by the records
+	 * resolved for the target. The RCODE is the target's (RFC 6604); AA is off
+	 * because part of the answer is not ours. If the target could not be
+	 * resolved (resolved == null) the chain is returned with SERVFAIL.
+	 */
+	public static Message completeCnameAnswer(Message partial, Message resolved) {
+		Message ret = new Message();
+		us.bringardner.net.dns.Header h = partial.getHeader().copy();
+		h.setAA(false);
+		h.setTC(false);
+		h.setRA(true);
+		ret.setHeader(h);
+		ret.setMessageTypeResponse();
+		for(Section q : partial.getQuestion()) {
+			ret.addQuestion(new Section(q));
+		}
+		for(RR rr : partial.getAnswer()) {
+			ret.addAnswer(rr);
+		}
+		if( resolved == null ) {
+			ret.setResponseCode(DNS.SERVER_ERROR);
+			return ret;
+		}
+		for(RR rr : resolved.getAnswer()) {
+			ret.addAnswer(rr);
+		}
+		for(RR rr : resolved.getAuthority()) {
+			ret.addAuthority(rr);
+		}
+		for(RR rr : resolved.getAdditional()) {
+			ret.addAdditional(rr);
+		}
+		ret.setResponseCode(resolved.getResponseCode());
+		return ret;
+	}
+
+	/**
+	 * A response to 'query' with no data and the given RCODE (e.g. SERVFAIL):
+	 * same ID, opcode, RD and question as the request, QR=1, RA=1, AA=0.
+	 */
+	public static Message failure(QueryData query, int rcode) {
+		Message req = query.getMessage();
+		Message ret = new Message();
+		us.bringardner.net.dns.Header h = req.getHeader().copy();
+		h.setAA(false);
+		h.setTC(false);
+		h.setRA(true);
+		ret.setHeader(h);
+		ret.setMessageTypeResponse();
+		ret.setResponseCode(rcode);
+		//  The question as the client sent it (QueryData's may have followed a CNAME)
+		Section q = req.getFirstQuestion() != null ? req.getFirstQuestion() : query.getQuestion();
+		if( q != null ) {
+			ret.setQuestion(new Section(q));
+		}
+		return ret;
 	}
 	
 	public static int backlog() {
@@ -107,9 +213,8 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 	 * @see     java.lang.Thread#run()
 	 */
 	public void run() {
-
-		running = true;
-
+		//  'running' is set by start(): setting it here raced with stop() and
+		//  a thread stopped right after starting would run forever.
 		while( running ) {
 			try {
 				setState("Waiting on fifo");
@@ -117,15 +222,36 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 				setState("Returned on fifo");
 				if( running && question != null ) {
 					setState("Call Resolver:"+question);
-					us.bringardner.net.dns.Message msg = Resolver.resolve(question.getQuestion());
-					setState("Returned from resolver");	
-					if( msg != null ) {
-						sendResponse(msg,question);
+					Message msg = null;
+					Section toResolve = question.getResolveQuestion();
+					try {
+						msg = Resolver.resolve(toResolve);
+					} catch(RuntimeException | StackOverflowError ex) {
+						logError("Resolver failed for "+toResolve, ex);
 					}
+					setState("Returned from resolver");
+					Message partial = question.getPartialAnswer();
+					if( partial != null ) {
+						//  Complete a local CNAME chain that pointed outside our zones
+						if( msg == null ) {
+							failed.incrementAndGet();
+						}
+						msg = completeCnameAnswer(partial, msg);
+					} else if( msg == null ) {
+						//  No answer (all servers timed out, no servers, or an error):
+						//  tell the client instead of leaving it to time out.
+						failed.incrementAndGet();
+						msg = failure(question, DNS.SERVER_ERROR);
+					}
+					sendResponse(msg,question);
+				}
+			} catch(InterruptedException ex) {
+				//  stop() interrupts the wait on the queue
+				if( !running ) {
+					break;
 				}
 			} catch(Exception ex) {
-
-				//  ignore them
+				logError("Unexpected error in resolver thread", ex);
 			}
 		}
 
@@ -146,14 +272,10 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 			//  Just in case;
 			msg.setID(query.getMessage().getID());
 
-			byte [] data = msg.toByteArray();
+			//  The old code cut the byte array at MAXUDPLEN (a corrupt packet
+			//  ending mid-record) and set TC on the shared message.
+			byte [] data = msg.toByteArray(us.bringardner.net.dns.server.UDPProsessor.getMaxResponseSize());
 			int dataSize = data.length;
-
-			if( data.length > DNS.MAXUDPLEN ) {
-				msg.truncateOn();
-				data = msg.toByteArray();;
-				dataSize = DNS.MAXUDPLEN;
-			}
 
 			setState("SendResponse getPacket");
 			DatagramPacket pckt = new DatagramPacket(data,dataSize,query.getClient(),query.getPort());
@@ -173,8 +295,9 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 		setState("SendResponse End");
 	}
 	
-	public void start(String name) {
+	public synchronized void start(String name) {
 		if( !running ) {
+			running = true;
 			thread = new Thread(this);
 			thread.setName(name);
 			thread.start();
@@ -184,7 +307,20 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 	
 	public void stop() {
 		running = false;
-		thread.interrupt();
+		Thread t = thread;
+		if( t != null ) {
+			t.interrupt();
+		}
+	}
+
+	/** Wait up to ms for this resolver thread to finish. @return true if it has */
+	public boolean join(long ms) throws InterruptedException {
+		Thread t = thread;
+		if( t != null ) {
+			t.join(ms);
+			return !t.isAlive();
+		}
+		return true;
 	}
 	
 }

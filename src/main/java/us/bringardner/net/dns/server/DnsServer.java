@@ -47,6 +47,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -54,6 +55,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Properties;
+import java.util.concurrent.ConcurrentHashMap;
 
 import javax.net.ServerSocketFactory;
 
@@ -93,11 +95,29 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	public static final String PROP_UDP_BIND_ADDRESS = "JDns.udp.bindAddress";
 	public static final String PROP_UDP_PORT = "JDns.udpPort";
 	public static final String PROP_UDP_TIMEOUT = "JDns.udpTimeout";
+	/** Largest UDP response in bytes (default 512, RFC 1035). Larger answers are truncated. */
+	public static final String PROP_UDP_MAX_RESPONSE = "JDns.udpMaxResponse";
 
 	public static final String PROP_TCP_PORT = "JDns.tcpPort";	
 	public static final String PROP_TCP_BIND_ADDRESS = "JDns.tcpBindAddress";
 	public static final String PROP_TCP_BACKLOG = "JDns.tcpBacklog";
 	public static final String PROP_TCP_TIMEOUT = "JDns.tcpTimeout";
+	/** Most TCP connections served at once (default 64). */
+	public static final String PROP_TCP_MAX_CONNECTIONS = "JDns.tcpMaxConnections";
+	/** An idle TCP connection is closed after this many ms (default 10000). */
+	public static final String PROP_TCP_IDLE_TIMEOUT = "JDns.tcpIdleTimeout";
+	/** Address the admin port listens on. Default: loopback only. Use 0.0.0.0 for all interfaces. */
+	public static final String PROP_ADMIN_BIND_ADDRESS = "JDns.adminBindAddress";
+	public static final String PROP_JDBC_URL = "JDns.jdbcURL";
+	/**
+	 * Shared secret for the admin port (challenge-response, see AdminAuth).
+	 * Without it only clients on this machine may use the admin port.
+	 */
+	public static final String PROP_ADMIN_SECRET = "JDns.adminSecret";
+	/** Most admin sessions at once (default 8). */
+	public static final String PROP_ADMIN_MAX_CONNECTIONS = "JDns.adminMaxConnections";
+	/** An idle admin session is closed after this many ms (default 600000). */
+	public static final String PROP_ADMIN_IDLE_TIMEOUT = "JDns.adminIdleTimeout";
 
 
 
@@ -123,14 +143,21 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 
 	private static ServerSocketFactory serverSocketFactory=ServerSocketFactory.getDefault();
-	private static int adminPort = 9999;
-	private static boolean shutdown = false;
-	private static boolean _debug = true;
+	private static volatile int adminPort = 9999;
+	//  Where the admin port listens (set in initServer, default loopback)
+	private volatile InetAddress adminBindAddress = InetAddress.getLoopbackAddress();
+	//  Limits concurrent admin sessions (each had its own unbounded thread)
+	private volatile java.util.concurrent.Semaphore adminSlots = new java.util.concurrent.Semaphore(8);
+	private volatile int adminIdleTimeout = 10*60*1000;
+	//  UDP/TCP processor threads started by initServer (for stopAndWait)
+	private final List<Thread> workers = new java.util.concurrent.CopyOnWriteArrayList<Thread>();
+	private static volatile boolean shutdown = false;
+	private static volatile boolean _debug = true;
 	private boolean standAlone=false;
 	private java.util.Date startTime = new java.util.Date();
 
 	//  Recursion Available
-	private boolean recursionAvailable = true;
+	private volatile boolean recursionAvailable = true;
 
 
 	private Thread thread;	
@@ -138,17 +165,47 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	//  Directory where all DNS info is stored
 	private File dnsDir;
 
+	/**
+	 * Immutable snapshot of the zones being served. Queries read one snapshot;
+	 * a reload builds a complete new one and publishes it in a single volatile
+	 * write, so a query never sees a half-loaded (or empty) set of zones.
+	 */
+	private static final class ZoneSet {
+		static final ZoneSet EMPTY = new ZoneSet(Collections.<String,Zone>emptyMap(), null, Collections.<String,Zone>emptyMap());
+		/** lower case zone name -> zone (unmodifiable) */
+		final Map<String, Zone> zones;
+		final Zone defaultZone;
+		/** zone file name -> zone loaded from it (unmodifiable) */
+		final Map<String, Zone> byFile;
+
+		ZoneSet(Map<String, Zone> zones, Zone defaultZone, Map<String, Zone> byFile) {
+			this.zones = zones;
+			this.defaultZone = defaultZone;
+			this.byFile = byFile;
+		}
+	}
+
 	// This information applies to all auth zones unless otherwise defined
-	private Map<String, Zone> zones = new HashMap<String, Zone>();
-	private Zone defaultZone;
+	private volatile ZoneSet zoneSet = ZoneSet.EMPTY;
+	//  zone file name -> lastModified, as seen by the last load attempt (successful or not)
+	private volatile Map<String, Long> lastSeenZoneFiles = null;
 
 
 	// These servers are used to forward requests
 	//private ArrayList forwarders;
 
-	private Map<String, String> common = new HashMap<String, String>();
+	//  lower case domain -> domain. Read by query threads, written by admin threads.
+	private final Map<String, String> common = new ConcurrentHashMap<String, String>();
 
-	private Map<String, List<A>> dynamic = new HashMap<String, List<A>>();
+	/**
+	 * Dynamic A records: lower case name -> unmodifiable list holding one A.
+	 * Read by query threads, written by admin threads and the DB/file reload.
+	 * The A objects are never modified after they are published; an address
+	 * change replaces the entry (see putDynamic).
+	 */
+	private final Map<String, List<A>> dynamic = new ConcurrentHashMap<String, List<A>>();
+	//  Serializes check-then-act updates of dynamic entries
+	private final Object dynamicLock = new Object();
 
 	//  Timeout for admin cycles
 	private long acceptTimeout = 60000; //  one minute
@@ -159,7 +216,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	private int UDPProcCount = 10;
 	private UDPProsessor [] UDPProcs;
 
-	private boolean running = false;
+	private volatile boolean running = false;
 
 	private int TCPProcCount = 4;	
 	private TCPProsessor [] TCPProcs;
@@ -180,17 +237,18 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	/**
 	 * Add a domain to our domain list
 	 **/
-	public synchronized void addDomain(String domain) {
+	public void addDomain(String domain) {
 		common.put(domain.toLowerCase(),domain);
 	}
 
 	/*
 	 * Add a new Zone to the global data
 	 */
-	public void addZone(Zone zone) {
-
-		zones.put(zone.getName().toLowerCase(),zone);	
-
+	public synchronized void addZone(Zone zone) {
+		ZoneSet cur = zoneSet;
+		Map<String, Zone> zones = new HashMap<String, Zone>(cur.zones);
+		zones.put(zone.getName().toLowerCase(),zone);
+		zoneSet = new ZoneSet(Collections.unmodifiableMap(zones), cur.defaultZone, cur.byFile);
 	}
 
 
@@ -221,26 +279,27 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * This dose not use the Jmail.Database
 	 * Factory because the connection will not remain open
 	 */
-	private Connection getConnection() {
-		Connection ret = null;
-
-		try {
-			String jdbcClass=getProperty("JDns.jdbcClass");
-			String url = getProperty("JDns.jdbcURL");
-			String user = getProperty("JDns.jdbcUser");
-			String password = getProperty("JDns.jdbcPassword");
-			Class.forName(jdbcClass);
-
-
-			ret = DriverManager.getConnection(url,user,password);
-
-
-
-		} catch(Exception ex) {
-			log(ex,"Database Init");
+	/**
+	 * Open a JDBC connection from JDns.jdbcClass / jdbcURL / jdbcUser / jdbcPassword.
+	 * @throws SQLException if it can't be opened. (It used to log and return
+	 * null, and every caller then failed with a NullPointerException.)
+	 */
+	private Connection getConnection() throws SQLException {
+		String jdbcClass = stringProperty("JDns.jdbcClass");
+		String url = stringProperty(PROP_JDBC_URL);
+		String user = getProperty("JDns.jdbcUser");
+		String password = getProperty("JDns.jdbcPassword");
+		if( url == null ) {
+			throw new SQLException(PROP_JDBC_URL+" is not set");
 		}
-
-		return ret;
+		if( jdbcClass != null ) {
+			try {
+				Class.forName(jdbcClass);
+			} catch(ClassNotFoundException ex) {
+				throw new SQLException("JDBC driver class not found: "+jdbcClass, ex);
+			}
+		}
+		return DriverManager.getConnection(url,user,password);
 	}
 
 	/**
@@ -275,7 +334,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 **/
 	public Zone getZone(String zoneName) {
 
-		Zone ret = (Zone)zones.get(zoneName.toLowerCase());
+		Zone ret = zoneSet.zones.get(zoneName.toLowerCase());
 
 
 		return ret;
@@ -300,7 +359,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * Find the closest Zone that matches this Question (Section)
 	 **/
 	public Map<String, Zone> getZones() {
-		return zones;
+		//  unmodifiable snapshot
+		return zoneSet.zones;
 	}
 
 	/**
@@ -362,89 +422,164 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		loadCommon();
 		loadDynamic();
 
-		int alltimeout = 5000;
-		int dnsPort = Message.DNSPORT;
-		if( (tmp=getProperty(PROP_PORT)) != null) {
-			dnsPort = Integer.parseInt(tmp);
-		}
-
-		if( (tmp=getProperty(PROP_TIMEOUT)) != null) {
-			alltimeout = Integer.parseInt(tmp);
-		}
+		int alltimeout = intProperty(PROP_TIMEOUT, 5000);
+		int dnsPort = intProperty(PROP_PORT, Message.DNSPORT);
 
 		InetAddress bindAddress = InetAddress.getLoopbackAddress();
-		if( (tmp=getProperty(PROP_BIND_ADDRESS)) != null) {
+		if( (tmp=stringProperty(PROP_BIND_ADDRESS)) != null) {
 			bindAddress = createBindAddress(tmp);
 		}
 
-		int port = dnsPort;
-		if( (tmp=getProperty(PROP_UDP_PORT)) != null) {
-			port = Integer.parseInt(tmp);
+		//  ---- UDP (each setting falls back to the general one)
+		int udpPort = intProperty(PROP_UDP_PORT, dnsPort);
+		InetAddress udpAddress = bindAddress;
+		if( (tmp=stringProperty(PROP_UDP_BIND_ADDRESS)) != null) {
+			udpAddress = createBindAddress(tmp);
 		}
-		InetAddress address = bindAddress;
-		if( (tmp=getProperty(PROP_UDP_BIND_ADDRESS)) != null) {
-			address = createBindAddress(tmp);
-		}
-
-		int udpTimeout = alltimeout;
-		if( (tmp=getProperty(PROP_UDP_TIMEOUT)) != null) {
-			alltimeout = Integer.parseInt(tmp);
-		}
+		//  (JDns.udpTimeout used to overwrite the general timeout instead of
+		//  setting the UDP one, so it changed the TCP timeout and not UDP's)
+		int udpTimeout = intProperty(PROP_UDP_TIMEOUT, alltimeout);
+		UDPProsessor.setMaxResponseSize(intProperty(PROP_UDP_MAX_RESPONSE, UDPProsessor.getMaxResponseSize()));
 
 		UDPProcs = new UDPProsessor[UDPProcCount];
 		Thread t = null;
-		log("UDP BindAddress = "+bindAddress+":"+port+" timout="+udpTimeout);
-		UDPProsessor.initUDPProsessor(port,address,udpTimeout);
+		log("UDP BindAddress = "+udpAddress+":"+udpPort+" timeout="+udpTimeout+" maxResponse="+UDPProsessor.getMaxResponseSize());
+		UDPProsessor.initUDPProsessor(udpPort,udpAddress,udpTimeout);
 
 		for(int i=0; i< UDPProcs.length; i++ ) {
 			UDPProcs[i] = new UDPProsessor(this,i);
 			t = new Thread(UDPProcs[i]);
 			t.setName("UDPProc"+i);
+			workers.add(t);
 			t.start();
 		}
 
+		//  ---- TCP
 		TCPProcs = new TCPProsessor[TCPProcCount];
-		port = dnsPort;
-		if( (tmp=getProperty(PROP_TCP_PORT)) != null) {
-			port = Integer.parseInt(tmp);
+		int tcpPort = intProperty(PROP_TCP_PORT, dnsPort);
+		int backlog = intProperty(PROP_TCP_BACKLOG, 10);
+		//  (JDns.tcpBindAddress used to be read and then ignored)
+		InetAddress tcpAddress = bindAddress;
+		if( (tmp=stringProperty(PROP_TCP_BIND_ADDRESS)) != null) {
+			tcpAddress = createBindAddress(tmp);
 		}
-		int backlong = 10;
-		if( (tmp=getProperty(PROP_TCP_BACKLOG)) != null) {
-			backlong = Integer.parseInt(tmp);
-		}
+		int tcpTimeout = intProperty(PROP_TCP_TIMEOUT, alltimeout);
+		int tcpMaxConnections = intProperty(PROP_TCP_MAX_CONNECTIONS, TCPProsessor.DEFAULT_MAX_CONNECTIONS);
+		int tcpIdleTimeout = intProperty(PROP_TCP_IDLE_TIMEOUT, TCPProsessor.DEFAULT_IDLE_TIMEOUT);
 
-		if( (tmp=getProperty(PROP_TCP_BIND_ADDRESS)) != null) {
-			address = createBindAddress(tmp);
-		}
-
-		int tcpTimeout = alltimeout;
-		if( (tmp=getProperty(PROP_TCP_TIMEOUT)) != null) {
-			tcpTimeout = Integer.parseInt(tmp);
-		}
-
-		log("TCP BindAddress = "+bindAddress+":"+port+" backlog="+backlong+" timout="+tcpTimeout);
-		TCPProsessor.initTCPProsessor(port,backlong,bindAddress,tcpTimeout);
+		log("TCP BindAddress = "+tcpAddress+":"+tcpPort+" backlog="+backlog+" timeout="+tcpTimeout
+				+" maxConnections="+tcpMaxConnections+" idleTimeout="+tcpIdleTimeout);
+		TCPProsessor.initTCPProsessor(tcpPort,backlog,tcpAddress,tcpTimeout,tcpMaxConnections,tcpIdleTimeout);
 
 		for(int i=0; i< TCPProcs.length; i++ ) {
 			TCPProcs[i] = new TCPProsessor(this,i);
 			t = new Thread(TCPProcs[i]);
 			t.setName("TCPProc"+i);
+			workers.add(t);
 			t.start();
 		}
 
 		us.bringardner.net.dns.resolve.Resolver.initResolver();
 
 
-		//  Init the server admin values
-
-		if( (tmp=getProperty(PROP_ADMIN_PORT))!=null) {
-			try {
-				setAdminPort(Integer.parseInt(tmp));
-			} catch(Exception ex) {}
+		//  ---- Admin (the socket is opened in run())
+		setAdminPort(intProperty(PROP_ADMIN_PORT, getAdminPort()));
+		adminBindAddress = InetAddress.getLoopbackAddress();
+		if( (tmp=stringProperty(PROP_ADMIN_BIND_ADDRESS)) != null) {
+			adminBindAddress = createBindAddress(tmp);
+		}
+		adminSlots = new java.util.concurrent.Semaphore(Math.max(1, intProperty(PROP_ADMIN_MAX_CONNECTIONS, 8)));
+		adminIdleTimeout = intProperty(PROP_ADMIN_IDLE_TIMEOUT, adminIdleTimeout);
+		if( stringProperty(PROP_ADMIN_SECRET) == null && !adminBindAddress.isLoopbackAddress() ) {
+			logError("Admin port listens on "+adminBindAddress+" but "+PROP_ADMIN_SECRET
+					+" is not set: only clients on this machine will be accepted");
 		}
 
 		log("JDns Server init Complete");
 	}  
+
+	/** @return the trimmed property value, or null if it is not set or empty */
+	private String stringProperty(String name) {
+		String ret = getProperty(name);
+		if( ret != null ) {
+			ret = ret.trim();
+			if( ret.isEmpty() ) {
+				ret = null;
+			}
+		}
+		return ret;
+	}
+
+	/**
+	 * @return the integer value of a property, or def if it is not set or empty
+	 * @throws IOException naming the property if the value is not a number
+	 */
+	int intProperty(String name, int def) throws IOException {
+		String tmp = stringProperty(name);
+		if( tmp == null ) {
+			return def;
+		}
+		try {
+			return Integer.parseInt(tmp);
+		} catch(NumberFormatException ex) {
+			throw new IOException("Invalid number for "+name+": '"+tmp+"'");
+		}
+	}
+
+	public InetAddress getAdminBindAddress() {
+		return adminBindAddress;
+	}
+
+	/**
+	 * Start an admin session for an accepted connection, or turn it away if
+	 * JDns.adminMaxConnections sessions are already open.
+	 * @return true if a session was started
+	 */
+	boolean handleAdminConnection(Socket clientSocket) {
+		final java.util.concurrent.Semaphore slots = adminSlots;
+		if( !slots.tryAcquire() ) {
+			log("Refused admin connection from "+clientSocket.getInetAddress()+": too many admin sessions");
+			try {
+				clientSocket.getOutputStream().write("-Too many admin connections\r\n".getBytes());
+				clientSocket.close();
+			} catch(IOException ex) {
+			}
+			return false;
+		}
+		try {
+			DnsAdminProcessor admin = new DnsAdminProcessor(this,clientSocket);
+			admin.setTimeout(adminIdleTimeout);
+			admin.setOnFinish(slots::release);
+			admin.start();
+			return true;
+		} catch(IOException | RuntimeException ex) {
+			slots.release();
+			log("Can't start admin session",ex);
+			try {
+				clientSocket.close();
+			} catch(IOException e) {
+			}
+			return false;
+		}
+	}
+
+	/** Set the most admin sessions at once (initServer reads JDns.adminMaxConnections). */
+	void setAdminMaxConnections(int max) {
+		adminSlots = new java.util.concurrent.Semaphore(Math.max(1, max));
+	}
+
+	/** Admin sessions that can still be opened. */
+	public int getAvailableAdminSlots() {
+		return adminSlots.availablePermits();
+	}
+
+	/**
+	 * Open the admin listener on adminPort / adminBindAddress.It used to
+	 * listen on every interface regardless of the DNS bind address.
+	 */
+	ServerSocket createAdminSocket() throws IOException {
+		return getServerSocketFactory().createServerSocket(getAdminPort(), 50, adminBindAddress);
+	}
 
 	private InetAddress createBindAddress(String tmp) throws UnknownHostException {
 		InetAddress ret = InetAddress.getLoopbackAddress();
@@ -475,10 +610,14 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		dnsDir=new File(getProperty(PROP_DNS_DIR,DEFAULT_DNS_DIR));
 
 		if( (tmp=getProperty(PROP_UDP_PROC_COUNT)) != null)  {
-			try { UDPProcCount =Integer.parseInt(tmp); } catch(Exception ex) {}
+			try { UDPProcCount =Integer.parseInt(tmp.trim()); } catch(Exception ex) {
+				logError("Invalid number for "+PROP_UDP_PROC_COUNT+": '"+tmp+"', using "+UDPProcCount);
+			}
 		}
 		if( (tmp=getProperty(PROP_TCP_PROC_COUNT)) != null)  {
-			try { TCPProcCount =Integer.parseInt(tmp); } catch(Exception ex) {}
+			try { TCPProcCount =Integer.parseInt(tmp.trim()); } catch(Exception ex) {
+				logError("Invalid number for "+PROP_TCP_PROC_COUNT+": '"+tmp+"', using "+TCPProcCount);
+			}
 		}
 
 	}
@@ -565,7 +704,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 				while( rs.next() ) {
 					String name = rs.getString(1);
-					common.put(name,name);
+					common.put(name.toLowerCase(),name);
 					log("Install common domain ="+name);
 
 				}
@@ -614,25 +753,25 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 */
 
 	public void addOrUpdateDynamic(String name, String ip) throws ClassNotFoundException, SQLException {
-		A a = null;
-		List<A> dyn = getDynamic(name);
-
-		if(dyn == null ) {
-			a =	addDynamic(name, ip);
-			if( a == null ) {
-				logError("-Undefined domain for "+name);
-				return;
+		synchronized (dynamicLock) {
+			List<A> dyn = getDynamic(name);
+			if(dyn == null ) {
+				A a =	addDynamic(name, ip);
+				if( a == null ) {
+					logError("-Undefined domain for "+name);
+					return;
+				} else {
+					createDynamic(name,ip);
+					return;
+				}
 			} else {
-				createDynamic(name,ip);
-				return;
+				A a = dyn.get(0);
+				String old = a.getAddressString();
+				if( !ip.equals(old)) {
+					replaceDynamicAddress(a, ip);
+				}
 			}
-		} else {
-			a = (A)dyn.get(0);
-			String old = a.getAddressString();    		
-			if( !ip.equals(old)) {
-				a.setAddress(ip);
-			}
-		} 
+		}
 		// Keep track of the last time we were contacted
 		saveDynamic(name,ip,STATUS_ACTIVE);
 
@@ -690,8 +829,18 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		}
 	}
 
-	private boolean useDatabase() {		
-		return getProperty(PROP_USE_BATABASE,"true").toLowerCase().startsWith("t");
+	/**
+	 * JDns.useDataBase=true/false decides. If it is not set, the database is
+	 * used only when JDns.jdbcURL is configured. (The old default was 'true',
+	 * so a server without a database tried to connect on every dynamic update
+	 * and reload, logged errors and hit NullPointerExceptions.)
+	 */
+	boolean useDatabase() {
+		String flag = stringProperty(PROP_USE_BATABASE);
+		if( flag != null ) {
+			return flag.toLowerCase().startsWith("t");
+		}
+		return stringProperty(PROP_JDBC_URL) != null;
 	}
 
 	private boolean loadDynamicFromDb() throws ClassNotFoundException, SQLException {
@@ -710,17 +859,19 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				while(rs.next()) {
 					String name = rs.getString(1);
 					String ip = rs.getString(2);
-					List<A> dyn = getDynamic(name);
-					if( dyn != null ) {
-						A a = (A)dyn.get(0);
-						String old = a.getAddressString();    		
-						if( !ip.equals(old)) {
-							a.setAddress(ip);
+					synchronized (dynamicLock) {
+						List<A> dyn = getDynamic(name);
+						if( dyn != null ) {
+							A a = dyn.get(0);
+							String old = a.getAddressString();
+							if( !ip.equals(old)) {
+								replaceDynamicAddress(a, ip);
+								ret = true;
+							}
+						} else {
+							addDynamic(name,ip);
 							ret = true;
 						}
-					} else {
-						addDynamic(name,ip);
-						ret = true;
 					}
 					log("Dynamic "+name+" "+ip+" ret="+ret);
 				}
@@ -828,86 +979,117 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		return ret;
 	}
 
-	boolean shouldReloadZones() {
-		boolean ret = false;
-		if( zoneDir == null ) {
-			ret = true;
-		} else {
-			File[] list = getZoneFiles();
-			if( list == null || list.length != zones.size()) {
-				ret = true;
-			} else {
-				//  put them in a map;
-				Map<String,File> map = new HashMap<>();
-				for(File file : list) {
-					map.put(file.getName(), file);					
-				}
-				for(Zone z : zones.values()) {
-					File f = z.getMasterFile();
-					File f2 = map.get(f.getName());
-					if( f== null || f2 == null ) {
-						ret = true;
-						break;
-					} else {
-						if(f2.lastModified() != z.getLastModified() ) {
-							ret = true;
-							break;							
-						}
-					}					
-				}			
+	/** Zone file name -> lastModified for the zone files in zoneDir now. */
+	private Map<String, Long> currentZoneFiles() {
+		Map<String, Long> ret = new HashMap<String, Long>();
+		File [] list = zoneDir == null ? null : getZoneFiles();
+		if( list != null ) {
+			for(File f : list) {
+				ret.put(f.getName(), f.lastModified());
 			}
 		}
 		return ret;
 	}
 
 	/**
-	 * Initialize the server from properties
+	 * @return true if a zone file was added, removed or modified since the last
+	 * load attempt. A file that failed to load does not cause another reload
+	 * until it changes (it used to trigger a full reload every admin cycle).
 	 */
+	boolean shouldReloadZones() {
+		Map<String, Long> seen = lastSeenZoneFiles;
+		if( zoneDir == null || seen == null ) {
+			return true;
+		}
+		return !currentZoneFiles().equals(seen);
+	}
 
-	private void loadZones() throws IOException {
-
+	/**
+	 * Load (or reload) all zones from zoneDir and publish them atomically.
+	 * <ul>
+	 * <li>Files whose timestamp has not changed reuse the Zone already loaded.</li>
+	 * <li>If a changed file fails to parse, the previous version of that zone
+	 *     is kept (logged); a new file that fails is skipped (logged).</li>
+	 * <li>If the default zone can't be found the new set is not published:
+	 *     the server keeps serving the previous zones and an IOException is thrown.</li>
+	 * </ul>
+	 */
+	synchronized void loadZones() throws IOException {
 		String dirName = getProperty(PROP_ZONE_DIR,"zones");
-
-
 		log("Loading zonez "+PROP_ZONE_DIR+"= "+dirName);
-
 		zoneDir = new File(dirName).getCanonicalFile();
 
-
-		if( !zoneDir.exists() ) {
-			throw new IOException(PROP_ZONE_DIR+" ="+zoneDir+" does not exist!!! exiting from "+getClass().getName());
-		}
-
-		File [] list = getZoneFiles(); 
-		if( list == null || list.length == 0 ) {
-			throw new IOException("Can't find zone file! Must have at lease a default Zone.  seraching in ("+zoneDir+") exiting from "+getClass().getName());			
-		}
-
-		defaultZoneName = getProperty(PROP_DEFAULT_ZONE,null);
-
-		log(PROP_DEFAULT_ZONE+"= "+defaultZoneName);
-		if( defaultZoneName == null || (defaultZoneName=defaultZoneName.trim()).isEmpty()) {
-			throw new IOException("Manditory property, "+PROP_DEFAULT_ZONE+" is not defined");
-		}
-
-		zones = new HashMap<String, Zone>();
-		for( int i=0; i< list.length; i++ ) {
-			try {
-				Zone z = new Zone(list[i]);
-				addZone(z);
-				log("Adding Zone "+z.getName());
-			} catch (Throwable e) {
-				logError("Error loading zone from "+list[i],e);
+		Map<String, Long> seen = new HashMap<String, Long>();
+		try {
+			if( !zoneDir.exists() ) {
+				throw new IOException(PROP_ZONE_DIR+" ="+zoneDir+" does not exist!!! exiting from "+getClass().getName());
 			}
-		}
-		if( (defaultZone=getZone(defaultZoneName)) == null ) {
-			logError("Can't find default zone '"+defaultZoneName+"'! Must have at lease a default.  seraching in ("+zoneDir+")");
-			throw new IOException("use '"+PROP_ZONE_DIR+"' or '"+PROP_DEFAULT_ZONE+"' to set correctly");			
+			File [] list = getZoneFiles(); 
+			if( list == null || list.length == 0 ) {
+				throw new IOException("Can't find zone file! Must have at lease a default Zone.  seraching in ("+zoneDir+") exiting from "+getClass().getName());			
+			}
+			defaultZoneName = getProperty(PROP_DEFAULT_ZONE,null);
+			log(PROP_DEFAULT_ZONE+"= "+defaultZoneName);
+			if( defaultZoneName == null || (defaultZoneName=defaultZoneName.trim()).isEmpty()) {
+				throw new IOException("Manditory property, "+PROP_DEFAULT_ZONE+" is not defined");
+			}
+
+			ZoneSet old = zoneSet;
+			Map<String, Long> oldSeen = lastSeenZoneFiles;
+			Map<String, Zone> zones = new HashMap<String, Zone>();
+			Map<String, Zone> byFile = new HashMap<String, Zone>();
+
+			for(File file : list) {
+				String fileName = file.getName();
+				//  Read the timestamp before the file so an edit made while we
+				//  read it triggers another reload.
+				long modified = file.lastModified();
+				seen.put(fileName, modified);
+
+				Zone prev = old.byFile.get(fileName);
+				Long prevModified = oldSeen == null ? null : oldSeen.get(fileName);
+				Zone z = null;
+				if( prev != null && prevModified != null && prevModified.longValue() == modified ) {
+					z = prev;
+				} else {
+					try {
+						z = new Zone(file);
+						log("Adding Zone "+z.getName());
+					} catch (Throwable e) {
+						if( prev != null ) {
+							logError("Error loading zone from "+file+", still serving the previous version",e);
+							z = prev;
+						} else {
+							logError("Error loading zone from "+file,e);
+						}
+					}
+				}
+
+				if( z != null ) {
+					byFile.put(fileName, z);
+					Zone dup = zones.put(z.getName().toLowerCase(),z);
+					if( dup != null && dup != z ) {
+						logError("Zone "+z.getName()+" is defined by more than one file, using "+file);
+					}
+				}
+			}
+
+			Zone def = zones.get(defaultZoneName.toLowerCase());
+			if( def == null ) {
+				logError("Can't find default zone '"+defaultZoneName+"'! Must have at lease a default.  seraching in ("+zoneDir+")");
+				throw new IOException("use '"+PROP_ZONE_DIR+"' or '"+PROP_DEFAULT_ZONE+"' to set correctly");			
+			}
+
+			//  Publish everything at once
+			zoneSet = new ZoneSet(Collections.unmodifiableMap(zones), def, Collections.unmodifiableMap(byFile));
+		} finally {
+			//  Remember what we looked at, even on failure, so we only try again when something changes
+			lastSeenZoneFiles = seen;
 		}
 	}
 
 	public Zone getDefaultZone() {
-		return defaultZone;
+		return zoneSet.defaultZone;
 	}
 
 	/**
@@ -916,13 +1098,19 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * @param args java.lang.String[]
 	 */
 	public static void main(String[] args) {
+		//  Log dead threads; on a JVM error (e.g. OutOfMemoryError) stop the
+		//  process so a supervisor restarts it (see FatalErrorHandler)
+		FatalErrorHandler.install(!"false".equalsIgnoreCase(
+				System.getProperty(FatalErrorHandler.PROP_EXIT_ON_FATAL_ERROR,"true").trim()));
+
 		us.bringardner.net.dns.server.DnsServer svr = new DnsServer();
-
-
 		svr.start(true);
-
 		while(!svr.running) {
-			Thread.yield();
+			try {
+				Thread.sleep(50);
+			} catch (InterruptedException e) {
+				return;
+			}
 		}
 
 		while(svr.isRunning()) {
@@ -973,6 +1161,9 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				retMsg.setMessageTypeResponse();
 				retMsg.setQuestion(s);
 				retMsg = step2(req,retMsg);
+				if( retMsg != null && req.getCnameTarget() != null ) {
+					retMsg = completeOutOfZoneCname(req, retMsg);
+				}
 				ret.add(retMsg);
 			}			
 		}
@@ -983,7 +1174,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	/**
 	 * Delete a domain from our domain list
 	 **/
-	public synchronized Object removeDomain(String domain) {
+	public Object removeDomain(String domain) {
 		return common.remove(domain.toLowerCase());
 	}
 
@@ -1007,9 +1198,9 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 		try {
 			int port = getAdminPort();
-			svrSock = getServerSocketFactory().createServerSocket(port);
+			svrSock = createAdminSocket();
 			svrSock.setSoTimeout((int)acceptTimeout);
-			log("Started dnsAdmin on port "+port);
+			log("Started dnsAdmin on "+adminBindAddress+":"+port);
 			setState("Running got socket");
 		} catch(IOException ex) {
 			log("Can't create server socket on port "+getAdminPort(),ex);
@@ -1059,15 +1250,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				setState("Waiting for admin connection");
 				Socket clientSocket = svrSock.accept();
 				if( clientSocket != null ) {
-					DnsAdminProcessor admin = new DnsAdminProcessor(this,clientSocket);
-					admin.start();
+					handleAdminConnection(clientSocket);
 					setState("Processing conneciton");
 				}
 
-			} catch (OutOfMemoryError ex) {
-				System.out.println("Out of memory");
-				ex.printStackTrace();
-				System.exit(1);
 			} catch(Exception ex) {
 				//Ignore exceptions
 			}
@@ -1152,7 +1338,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		Zone zone = getZone(question);
 		if( zone == null ) {
 			if( isCommon(question) ) {
-				zone = defaultZone;
+				zone = getDefaultZone();
 			}
 		}
 
@@ -1195,9 +1381,17 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		return ret;
 	}
 
-	/* RFC 1034
+	/**
+	 * @return true if name is the apex of the zone we answer from: the zone's
+	 * own name, or a 'common' domain served from the default zone.
+	 */
+	private boolean isZoneApex(String name, Zone zone) {
+		String n = name.toLowerCase();
+		return n.equals(zone.getName().toLowerCase()) || common.containsKey(n);
+	}
 
-   3. Start matching down, label by label, in the zone.  The
+	/* RFC 1034
+   3. Start matching down, label by label, in the zone.The
       matching process can terminate several ways:
 
          a. If the whole of QNAME is matched, we have found the
@@ -1291,9 +1485,17 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		}
 		//System.out.println(target+" list 2="+list1);
 		if( list == null ) {
-			//  Since we found a zone, if no matches are found, its an error.
-			//ret.setResponseCodeNameError();
-			ret.addAuthority(zone.getSoa());
+			//  We are authoritative for this zone and the name has no records.
+			//  NXDOMAIN (RFC 1034 4.3.2 step 3c), unless it is an empty
+			//  non-terminal (has names below it), which exists: NODATA.
+			//  Either way the SOA goes in the authority section (RFC 2308 3).
+			//  After a CNAME this also sets the final RCODE (RFC 6604).
+			if( zone.hasNamesBelow(target) ) {
+				ret.setResponseCodeNoError();
+			} else {
+				ret.setResponseCodeNameError();
+			}
+			ret.addAuthority(zone.getNegativeSoa());
 		} else {
 
 			//  Since we found the name it's not a name error even if we may not have the type
@@ -1319,9 +1521,33 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 					case DNS.CNAME:
 						if( type != DNS.CNAME) {
-							//  Need to add more stuff
-							query.setQuestion(new Section(((Cname)realrr).getCname(),type,question.getDnsClass()));
-							step2(query,ret);
+							//  Follow the CNAME (RFC 1034 4.3.2 step 3a), but never
+							//  in a loop (a -> b -> a) or past MAX_CNAME_CHAIN,
+							//  which used to recurse until StackOverflowError.
+							String cname = ((Cname)realrr).getCname();
+							if( query.followCname(cname) ) {
+								Section next = new Section(cname,type,question.getDnsClass());
+								if( isLocalName(next) ) {
+									//  Chase it in our own zones; the request's question
+									//  is restored afterwards (it used to stay changed).
+									query.setQuestion(next);
+									try {
+										step2(query,ret);
+									} finally {
+										query.setQuestion(question);
+									}
+								} else {
+									//  The chain leaves our zones: stop here. query()
+									//  completes it through the resolver when recursion is
+									//  available and desired, as ONE response. (It used to
+									//  send the CNAME alone and then a second response for
+									//  the target's question with the same ID.)
+									query.setCnameTarget(next);
+								}
+							} else {
+								logError("CNAME loop or chain too long at "+target+" -> "+cname
+										+" (followed "+query.getCnameCount()+"), answering with the chain so far");
+							}
 						}
 						break;
 					case DNS.NS:
@@ -1353,9 +1579,19 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 
 
+		//  NODATA at the zone apex: the loop above put the zone's own NS records
+		//  in the authority section, which other resolvers read as a referral
+		//  (to the same servers). RFC 2308 2.2: answer with the SOA instead.
+		//  (NS records at any other name are a delegation and are kept.)
+		if( ret.getAnswerCount() == 0 && ret.isResponseCodeNoError() && list != null
+				&& isZoneApex(target, zone) ) {
+			ret.getAuthority().clear();
+			ret.getAdditional().clear();
+		}
+
 		if( doNs && ret.getNSCount() == 0 ) {
 			if( ret.isResponseCodeNameError() ) {
-				ret.addAuthority(zone.getSoa());
+				ret.addAuthority(zone.getNegativeSoa());
 			} else {
 				//  No ns records.  Add the domain info
 				zone.setLocalInfo(ret);
@@ -1385,14 +1621,22 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		Message ret = msg;
 
 
-		//  if the port == -1 then this is a TCP request and we won't support recursion
-		if( question.getPort() == -1 ) {
-			ret.setRecursiveAvailableOff();		
-		} else 	if( recursionAvailable && question.getMessage().isRecursiveDesired() ) {
+		if( recursionAvailable && question.getMessage().isRecursiveDesired() ) {
 			//  The resolver has the cache.  So it takes care of 4 & 5
 			question.getMessage().setAuthorityAnswerOff();
-			us.bringardner.net.dns.resolve.ResolverThread.addQuery(question);
-			ret = null;
+			if( question.getPort() == -1 ) {
+				//  TCP: resolve in this (TCP processor) thread. TCP used to get an
+				//  empty NOERROR answer, which since UDP truncation (rec #12) is
+				//  what a client got after retrying a large recursive answer.
+				ret = resolveNow(question);
+			} else if( us.bringardner.net.dns.resolve.ResolverThread.addQuery(question) ) {
+				//  A resolver thread will answer
+				ret = null;
+			} else {
+				//  Backlog full: say so now instead of dropping the query
+				logError("Resolver backlog full, SERVFAIL for "+question.getQuestion());
+				ret = us.bringardner.net.dns.resolve.ResolverThread.failure(question, DNS.SERVER_ERROR);
+			}
 		} else {
 			ret.setID(msg.getID());
 		}
@@ -1403,6 +1647,70 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 		return ret;
 
+	}
+
+	/** @return true if the name is in one of our zones (or a 'common' domain) */
+	private boolean isLocalName(Section s) {
+		return getZone(s) != null || isCommon(s);
+	}
+
+	/**
+	 * Our zone answered with a CNAME chain that ends outside our zones
+	 * (req.getCnameTarget()).
+	 * <ul>
+	 * <li>No recursion (not available or not desired): the chain is the
+	 *     authoritative answer, NOERROR; the client follows the rest.</li>
+	 * <li>TCP: resolve the target now and answer chain + target.</li>
+	 * <li>UDP: a resolver thread resolves the target and sends chain + target
+	 *     (returns null: nothing to send now). If its backlog is full the
+	 *     chain is sent as it is.</li>
+	 * </ul>
+	 */
+	private Message completeOutOfZoneCname(QueryData req, Message partial) {
+		if( !recursionAvailable || !req.getMessage().isRecursiveDesired() ) {
+			req.setCnameTarget(null);
+			return partial;
+		}
+		if( req.getPort() == -1 ) {
+			Message resolved = resolveOrNull(req.getCnameTarget());
+			req.setCnameTarget(null);
+			return us.bringardner.net.dns.resolve.ResolverThread.completeCnameAnswer(partial, resolved);
+		}
+		req.setPartialAnswer(partial);
+		if( us.bringardner.net.dns.resolve.ResolverThread.addQuery(req) ) {
+			return null;
+		}
+		logError("Resolver backlog full, answering "+partial.getFirstQuestion()+" with the CNAME chain only");
+		req.setPartialAnswer(null);
+		req.setCnameTarget(null);
+		return partial;
+	}
+
+	/** Resolve in the calling thread; null if it fails. */
+	private Message resolveOrNull(Section s) {
+		try {
+			return Resolver.resolve(s);
+		} catch(RuntimeException | StackOverflowError ex) {
+			logError("Resolver failed for "+s, ex);
+			return null;
+		}
+	}
+
+	/**
+	 * Resolve a recursive query in the calling thread (used for TCP).
+	 * @return the answer, or SERVFAIL if it could not be resolved
+	 */
+	private Message resolveNow(QueryData question) {
+		Message ret = null;
+		try {
+			ret = Resolver.resolve(question.getQuestion());
+		} catch(RuntimeException | StackOverflowError ex) {
+			logError("Resolver failed for "+question.getQuestion(), ex);
+		}
+		if( ret == null ) {
+			ret = us.bringardner.net.dns.resolve.ResolverThread.failure(question, DNS.SERVER_ERROR);
+		}
+		return ret;
 	}
 
 	/*
@@ -1436,17 +1744,35 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 	}
 
+	/** @return a snapshot copy of the dynamic entries (lower case name -> [A]) */
 	public Map<String, List<A>> getDynamic() {
-		Map<String, List<A>> ret = new HashMap<String, List<A>>();
-		for(String name: dynamic.keySet()) {
-			ret.put(name, dynamic.get(name));
-		}
-		return ret;
+		return new HashMap<String, List<A>>(dynamic);
+	}
+
+	/** Dynamic names are case-insensitive (the query path looks them up in lower case). */
+	private static String dynamicKey(String name) {
+		return name.toLowerCase();
 	}
 
 	public List<A> getDynamic(String name) {
-		List<A> ret = dynamic.get(name);
-		return ret;
+		return dynamic.get(dynamicKey(name));
+	}
+
+	/** Publish a fully built A as the dynamic entry for its name. */
+	private void putDynamic(A a) {
+		dynamic.put(dynamicKey(a.getName()), Collections.singletonList(a));
+	}
+
+	/**
+	 * Change a dynamic address by publishing a new A (the old object may be
+	 * in use by a query thread and is never modified).
+	 */
+	private A replaceDynamicAddress(A old, String ip) {
+		A a = new A(old.getName());
+		a.setAddress(ip);
+		a.setTTL(old.getTTL());
+		putDynamic(a);
+		return a;
 	}
 
 	/**
@@ -1469,9 +1795,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			ret = new A(name);
 			ret.setAddress(addr);
 			ret.setTTL(zone.getSoa().getTTL());
-			List<A> list = new ArrayList<A>();
-			list.add(ret);
-			dynamic.put(name, list);
+			putDynamic(ret);
 		}
 
 		return ret;
@@ -1499,12 +1823,52 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	public void stop() 	{
 		running = false;
 		shutdown = true;
-		thread.interrupt();
+		Thread t = thread;
+		if( t != null ) {
+			t.interrupt();
+		}
 		Resolver.shutDown();
 	}
 
+	/**
+	 * Stop the server and wait (up to timeoutMs in total) for the threads it
+	 * started to finish. The listening sockets are closed so threads blocked
+	 * in receive()/accept() wake up at once instead of after their socket
+	 * timeout (stop() alone left them running for up to that long, and they
+	 * kept serving if the shutdown flag was cleared in the meantime).
+	 * 
+	 * @return true if every thread finished in time
+	 */
+	public boolean stopAndWait(long timeoutMs) throws InterruptedException {
+		long deadline = System.currentTimeMillis()+timeoutMs;
+		stop();
+		java.net.DatagramSocket udp = UDPProsessor.getSock();
+		if( udp != null ) {
+			udp.close();
+		}
+		ServerSocket tcp = TCPProsessor.getServerSocket();
+		if( tcp != null ) {
+			try {
+				tcp.close();
+			} catch(IOException ex) {
+			}
+		}
+		long remaining = deadline - System.currentTimeMillis();
+		boolean ret = TCPProsessor.shutdownConnections(Math.max(1, remaining));
+		for(Thread w : workers) {
+			long left = deadline - System.currentTimeMillis();
+			if( left > 0 ) {
+				w.join(left);
+			}
+			ret &= !w.isAlive();
+		}
+		long left = deadline - System.currentTimeMillis();
+		ret &= Resolver.awaitShutdown(Math.max(1, left));
+		return ret;
+	}
+
 	public void removeDynamic(String name) throws IOException  {
-		List<A> list = dynamic.remove(name);
+		List<A> list = dynamic.remove(dynamicKey(name));
 
 		if( list != null) {
 			A a = list.get(0);

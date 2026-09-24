@@ -32,11 +32,15 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import us.bringardner.net.dns.Cname;
 import us.bringardner.net.dns.DNS;
@@ -51,18 +55,52 @@ public class Resolver  extends DnsBaseClass
 	private static final String PROP_MAX_DNS_CACHE_AGE = "JDns.maxCacheAge";
 
 	private static final String PROP_RESOLVER_COUNT = "JDns.resolvers";
+	public static final String PROP_MAX_CACHE_ENTRIES = "JDns.maxCacheEntries";
+	public static final String PROP_CACHE_SWEEP_SECONDS = "JDns.cacheSweepSeconds";
+	//  Periodically removes expired cache entries
+	private static java.util.concurrent.ScheduledExecutorService cacheSweeper;
 
-	private static Cache cache = new Cache();
+	private static volatile Cache cache = new Cache();
 
-	//  This is created ahead of time in case we're out of memory & want to reset things
-	private static Cache safty = new Cache();
 
-	private static List<RemoteServer> sbelt = new ArrayList<RemoteServer>();
+
+	private static final List<RemoteServer> sbelt = new CopyOnWriteArrayList<RemoteServer>();
 	//  this is used to 'round robin' the starting server	
 	//  so that we don't always use the same one (spread the load)
 	//private static int current=0;
 	//private static int sbeltSize;
-	private static Map<String,List<RemoteServer>> servers = new HashMap<String, List<RemoteServer>>();
+	public static final String PROP_MAX_DELEGATIONS = "JDns.maxDelegations";
+	/** seconds, default 10800 (3 hours) */
+	public static final String PROP_MAX_NEGATIVE_TTL = "JDns.maxNegativeTtl";
+	public static final String PROP_DELEGATION_MAX_AGE = "JDns.delegationMaxAge";
+
+	/** A zone's name servers learned from a referral. */
+	private static final class Delegation {
+		final RemoteServer server;
+		final long learnedAt;
+		Delegation(RemoteServer server, long learnedAt) {
+			this.server = server;
+			this.learnedAt = learnedAt;
+		}
+	}
+
+	private static volatile int maxDelegations = 10000;
+	//  How long a learned delegation is used before it is replaced by a fresh referral (ms)
+	private static volatile long delegationMaxAge = 60*60*1000L;
+
+	/**
+	 * Delegations learned while resolving: lower case zone name -> ONE
+	 * RemoteServer per zone (later referrals merge their addresses into it).
+	 * LRU bounded by maxDelegations. Guarded by synchronized(servers); it is
+	 * used by every ResolverThread.
+	 */
+	private static final Map<String,Delegation> servers = new LinkedHashMap<String,Delegation>(64, 0.75f, true) {
+		private static final long serialVersionUID = 1L;
+		@Override
+		protected boolean removeEldestEntry(Map.Entry<String,Delegation> eldest) {
+			return size() > maxDelegations;
+		}
+	};
 	private static ResolverThread [] resolvers;
 	private static int started = 0;
 	private static int completed = 0;
@@ -71,15 +109,72 @@ public class Resolver  extends DnsBaseClass
 	private static int ave = 0;
 	private static double timeAccum = 0.0;
 
-	private static void addServer(RemoteServer svr) {
-		if( svr != null ) {
-			List<RemoteServer> al = (List<RemoteServer>)servers.get(svr.getName());
-			if( al == null ) {
-				al = new ArrayList<RemoteServer>();
-				servers.put(svr.getName(),al);
-			}
-			al.add(svr);
+	/**
+	 * Remember the name servers from a referral.
+	 * <p>
+	 * There is one RemoteServer per zone. If a fresh one is already known,
+	 * the new addresses are merged into it (so each address keeps its
+	 * statistics and deactivation state) and the known instance is returned.
+	 * The old code appended a new RemoteServer on every referral, so the list
+	 * grew forever and a dead server was queried again with a clean slate.
+	 * 
+	 * @return the RemoteServer to use for this zone
+	 */
+	static RemoteServer addServer(RemoteServer svr) {
+		//  getName() is null when the referral had no NS records
+		if( svr == null || svr.getName() == null ) {
+			return svr;
 		}
+		//  Keys are lower case: getServers() looks up the lower case question name
+		String key = svr.getName().toLowerCase();
+		long now = System.currentTimeMillis();
+		synchronized (servers) {
+			Delegation d = servers.get(key);
+			if( d != null && (now - d.learnedAt) < delegationMaxAge ) {
+				d.server.mergeAddresses(svr);
+				return d.server;
+			}
+			servers.put(key, new Delegation(svr, now));
+			return svr;
+		}
+	}
+
+	/** @return the known, fresh delegation for this exact zone name, or null */
+	static RemoteServer getDelegation(String zone) {
+		String key = zone.toLowerCase();
+		synchronized (servers) {
+			Delegation d = servers.get(key);
+			if( d == null ) {
+				return null;
+			}
+			if( (System.currentTimeMillis() - d.learnedAt) >= delegationMaxAge ) {
+				servers.remove(key);
+				return null;
+			}
+			return d.server;
+		}
+	}
+
+	public static int delegationCount() {
+		synchronized (servers) {
+			return servers.size();
+		}
+	}
+
+	public static void setMaxDelegations(int max) {
+		synchronized (servers) {
+			maxDelegations = max > 0 ? max : 1;
+			Iterator<String> it = servers.keySet().iterator();
+			while( servers.size() > maxDelegations && it.hasNext() ) {
+				it.next();
+				it.remove();
+			}
+		}
+	}
+
+	/** @param ms how long a learned delegation is used before a fresh referral replaces it */
+	public static void setDelegationMaxAge(long ms) {
+		delegationMaxAge = ms;
 	}
 	
 	public static int cacheSize() {
@@ -87,11 +182,11 @@ public class Resolver  extends DnsBaseClass
 		return ret;
 	}
 	
-	public static int getAve() {
+	public static synchronized int getAve() {
 		return ave;
 	}
 	
-	public static int getCompleted() {
+	public static synchronized int getCompleted() {
 		return completed;
 	}
 
@@ -105,11 +200,11 @@ public class Resolver  extends DnsBaseClass
 	}	
 	 */
 
-	public static int getMax()	{
+	public static synchronized int getMax()	{
 		return max;
 	}
 
-	public static int getMin()	{
+	public static synchronized int getMin()	{
 		return min;
 	}
 
@@ -124,22 +219,11 @@ public class Resolver  extends DnsBaseClass
 
 	//	Find cached servers closest to this name
 	private static List<RemoteServer> getServers(Section nm) {
-		String key = nm.getName().toLowerCase();
-		List<RemoteServer> ret = servers.get(key);
-		if( ret != null ) {
-			//  Make sure it has an active server
-			Iterator<RemoteServer> it = ret.iterator();
-			boolean useit = false;
-			while(it.hasNext()) {
-				if( ((RemoteServer)it.next()).isActive())  {
-					useit = true;
-					break;
-				}
-			}
-
-			if( !useit ) {
-				ret = null;
-			}
+		List<RemoteServer> ret = null;
+		RemoteServer known = getDelegation(nm.getName());
+		//  Only use it if it has an active server
+		if( known != null && known.isActive() ) {
+			ret = Collections.singletonList(known);
 		}
 
 		//  If no active server exists, search for one 'further'
@@ -156,17 +240,19 @@ public class Resolver  extends DnsBaseClass
 		return ret;
 	}
 
-	public static int getStarted()	{
+	public static synchronized int getStarted()	{
 		return started;
 	}
 
 	public static String getStats()	{
 		String ret =
 
-				"Resolver Cache size="+cacheSize()+" RemoteServer size="+servers.size()+
+				"Resolver Cache size="+cacheSize()+"/"+cache.getMaxEntries()+" Delegations="+delegationCount()+"/"+maxDelegations+
 				"\n Resolver capacity="+us.bringardner.net.dns.resolve.ResolverThread.getMaxBackLog()+
 				"  current="+us.bringardner.net.dns.resolve.ResolverThread.getBacklog()+
 				"\nResolver Stats: inflight="+(started-completed)+
+				" dropped(backlog full)="+ResolverThread.getDropped()+
+				" servfail="+ResolverThread.getFailed()+
 				" completed="+completed+
 				" min="+min+
 				" max="+max+
@@ -251,6 +337,41 @@ public class Resolver  extends DnsBaseClass
 			}
 		}
 
+		if( (tmp=prop.getProperty(PROP_MAX_CACHE_ENTRIES)) != null ) {
+			try {
+				int max = Integer.parseInt(tmp.trim());
+				Cache.setDefaultMaxEntries(max);
+				cache.setMaxEntries(max);
+
+			} catch(Exception ex) {
+				Resolver logger = new Resolver();
+				logger.logError("Error setting "+PROP_MAX_CACHE_ENTRIES,ex);
+			}
+		}
+		startCacheSweeper(prop);
+
+		if( (tmp=prop.getProperty(PROP_MAX_NEGATIVE_TTL)) != null ) {
+			try {
+				Cache.setMaxNegativeTtl(Long.parseLong(tmp.trim()));
+			} catch(Exception ex) {
+				new Resolver().logError("Error setting "+PROP_MAX_NEGATIVE_TTL,ex);
+			}
+		}
+		if( (tmp=prop.getProperty(PROP_MAX_DELEGATIONS)) != null ) {
+			try {
+				setMaxDelegations(Integer.parseInt(tmp.trim()));
+			} catch(Exception ex) {
+				new Resolver().logError("Error setting "+PROP_MAX_DELEGATIONS,ex);
+			}
+		}
+		if( (tmp=prop.getProperty(PROP_DELEGATION_MAX_AGE)) != null ) {
+			try {
+				setDelegationMaxAge(Long.parseLong(tmp.trim())*1000L);
+			} catch(Exception ex) {
+				new Resolver().logError("Error setting "+PROP_DELEGATION_MAX_AGE,ex);
+			}
+		}
+
 		int resolverCount = 10;
 
 		if( (tmp=prop.getProperty(PROP_RESOLVER_COUNT)) != null ) {
@@ -307,12 +428,52 @@ public class Resolver  extends DnsBaseClass
 	public static void removeOld() {
 		cache.removeOld();
 	}
+
+	/** Remove expired entries from the cache. @return number removed */
+	public static int removeExpired() {
+		return cache.removeExpired();
+	}
+
+	private static synchronized void startCacheSweeper(Properties prop) {
+		if( cacheSweeper != null ) {
+			return;
+		}
+		long seconds = 60;
+		String tmp = prop.getProperty(PROP_CACHE_SWEEP_SECONDS);
+		if( tmp != null ) {
+			try {
+				seconds = Math.max(1, Long.parseLong(tmp.trim()));
+			} catch(Exception ex) {}
+		}
+		cacheSweeper = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+			Thread t = new Thread(r,"ResolverCacheSweeper");
+			t.setDaemon(true);
+			return t;
+		});
+		cacheSweeper.scheduleWithFixedDelay(() -> {
+			try {
+				removeExpired();
+			} catch(Throwable ex) {
+				new Resolver().logError("Cache sweep failed",ex);
+			}
+		}, seconds, seconds, java.util.concurrent.TimeUnit.SECONDS);
+	}
+
+	private static synchronized void stopCacheSweeper() {
+		if( cacheSweeper != null ) {
+			cacheSweeper.shutdownNow();
+			cacheSweeper = null;
+		}
+	}
 	
+	/** Empty the cache and the learned delegations (admin 'reset'). */
 	public static void reset() {
-		cache = safty;
-		System.gc();
-		safty = new Cache();
-		servers = new HashMap<String,List<RemoteServer>>();
+		//  (used to swap in a spare cache kept for out-of-memory emergencies
+		//  and call System.gc(); the cache is bounded now)
+		cache.clear();
+		synchronized (servers) {
+			servers.clear();
+		}
 	}
 	/**
 	 * Attempt to get an answer to a question
@@ -329,19 +490,36 @@ public class Resolver  extends DnsBaseClass
 	}
 	
 	public static Message resolve(Section question) {
-		Message ret = null;
-
 		incStart();
 		long time = System.currentTimeMillis();
 
-		if( (ret=cache.get(question)) == null ) {
+		Message ret = resolveChain(question, new HashSet<String>(), 0);
+
+		incComplted((int)(System.currentTimeMillis()-time),question);
+
+		return ret;
+	}
+
+	/**
+	 * Resolve 'question', following a CNAME answer to its target.
+	 * <p>
+	 * The chain is limited to QueryData.MAX_CNAME_CHAIN hops and a name is
+	 * never followed twice, so a loop (a -> b -> a) ends with the chain found
+	 * so far instead of recursing until StackOverflowError.
+	 * 
+	 * @param seen lower case names already visited in this chain
+	 * @param depth number of CNAMEs followed so far
+	 */
+	private static Message resolveChain(Section question, Set<String> seen, int depth) {
+		seen.add(question.getName().toLowerCase());
+
+		Message ret = cache.get(question);
+		if( ret == null ) {
 			//  Nothing in cache, search for it
 			if( (ret=resolve(question, getServers(question))) != null ) {
 				cache.put(ret);						
 			}
 		}
-
-
 
 		//  If this is the first time for a CNAME, AnswerCount should be 1
 		//  If it's grater than that, it's already been combined
@@ -349,7 +527,13 @@ public class Resolver  extends DnsBaseClass
 			//  Check for CNAME
 			RR rr = (RR)ret.getAnswer().get(0);
 			if( rr.getType() == DNS.CNAME && question.getType() != DNS.CNAME ) {
-				Message ret2 = resolve(new Section(((Cname)rr).getCname(),question.getType(),question.getDnsClass()));
+				String target = ((Cname)rr).getCname();
+				if( depth >= QueryData.MAX_CNAME_CHAIN || seen.contains(target.toLowerCase()) ) {
+					new Resolver().logError("CNAME loop or chain too long at "+question.getName()+" -> "+target
+							+" (followed "+depth+"), returning the chain so far");
+					return ret;
+				}
+				Message ret2 = resolveChain(new Section(target,question.getType(),question.getDnsClass()), seen, depth+1);
 				if( ret2 == null ) {
 					ret = ret2;
 				} else {
@@ -362,10 +546,12 @@ public class Resolver  extends DnsBaseClass
 			}
 		}
 
-
-		incComplted((int)(System.currentTimeMillis()-time),question);
-
 		return ret;
+	}
+
+	/** For tests: the live cache. */
+	static Cache getCache() {
+		return cache;
 	}
 
 	private static Message resolve(Section question, List<RemoteServer> slist) {
@@ -397,10 +583,10 @@ public class Resolver  extends DnsBaseClass
 						if( svr2 != null && svr.matchCount(question) < svr2.matchCount(question) ) {
 							//  This set of servers is 'closer' to the
 							//  answer, so cache it 
-							addServer(svr2);
+							//  (the zone's known RemoteServer, with these addresses merged in)
+							RemoteServer use = addServer(svr2);
 							// and use them instead.
-							slist = new ArrayList<RemoteServer>(1);
-							slist.add(svr2);
+							slist = Collections.singletonList(use);
 							//TODO:  Major testing here
 							return resolve(question,slist);
 						}
@@ -413,8 +599,24 @@ public class Resolver  extends DnsBaseClass
 		return ret;
 	}
 	
+	/**
+	 * Wait up to ms for the resolver threads stopped by shutDown() to finish.
+	 * @return true if they all have
+	 */
+	public static boolean awaitShutdown(long ms) throws InterruptedException {
+		ResolverThread [] list = resolvers;
+		boolean ret = true;
+		long deadline = System.currentTimeMillis()+ms;
+		for(int i=0; list != null && i< list.length; i++ ) {
+			long left = Math.max(1, deadline - System.currentTimeMillis());
+			ret &= list[i].join(left);
+		}
+		return ret;
+	}
+
 	public static void shutDown() {
-		for(int i=0; i< resolvers.length; i++ ) {
+		stopCacheSweeper();
+		for(int i=0; resolvers != null && i< resolvers.length; i++ ) {
 			resolvers[i].stop();
 		}
 		//ResolverThread.notifyThreads();

@@ -476,8 +476,9 @@ public class DnsAdminProcessor  extends DnsBaseClass implements Runnable, DnsAdm
 	private CRLFLineReader in;
 	private CRLFLineWriter out;
 	private Thread thread;
-	private boolean running = false;
+	private volatile boolean running = false;
 	private DnsServer server;
+	private volatile Runnable onFinish;
 
 	//  Default timeout = 1min
 	private int timeout = 60*1000*10;
@@ -610,8 +611,57 @@ public class DnsAdminProcessor  extends DnsBaseClass implements Runnable, DnsAdm
 
 
 
+	/** Called once when this session ends (frees the server's admin slot). */
+	public void setOnFinish(Runnable onFinish) {
+		this.onFinish = onFinish;
+	}
+
+	/** Idle timeout of this session in ms. */
+	public void setTimeout(int timeout) {
+		this.timeout = timeout;
+	}
+
+	/** JDns.adminSecret, or null if not set */
+	private String adminSecret() {
+		String s = server.getProperty(DnsServer.PROP_ADMIN_SECRET);
+		if( s != null ) {
+			s = s.trim();
+			if( s.isEmpty() ) {
+				s = null;
+			}
+		}
+		return s;
+	}
+
 	public void run() {
-		
+		try {
+			session();
+		} finally {
+			try {	out.flush();}catch(Exception ex){}
+			if( in != null ) { try { in.close(); } catch(Exception ex) {} }
+			if( out != null ) { try { out.close(); } catch(Exception ex) {} }
+			if( sock != null ) { try { sock.close(); } catch(Exception ex) {} }
+			in = null;
+			out = null;
+			sock = null;
+			Runnable r = onFinish;
+			if( r != null ) {
+				r.run();
+			}
+		}
+	}
+
+	/**
+	 * One admin session.
+	 * <ul>
+	 * <li>JDns.adminSecret set: the greeting carries a challenge and nothing
+	 *     but 'auth &lt;answer&gt;' (see AdminAuth) or 'quit' is accepted until
+	 *     the client has answered it.</li>
+	 * <li>No secret: only clients on this machine (loopback) are accepted.</li>
+	 * </ul>
+	 * The admin port used to accept any command from anyone who could connect.
+	 */
+	private void session() {
 		running = true;
 		try {
 			sock.setSoTimeout(timeout);
@@ -619,18 +669,53 @@ public class DnsAdminProcessor  extends DnsBaseClass implements Runnable, DnsAdm
 			log("Can't set timeout",ex);
 		}
 
+		String secret = adminSecret();
+		String challenge = null;
+		boolean authenticated;
+		InetAddress peer = sock.getInetAddress();
+
+		try {
+			if( secret == null ) {
+				if( peer == null || !peer.isLoopbackAddress() ) {
+					log("Refused admin connection from "+peer+": "+DnsServer.PROP_ADMIN_SECRET+" is not set");
+					out.writeLine("-Admin access from "+peer+" requires "+DnsServer.PROP_ADMIN_SECRET+" on the server");
+					return;
+				}
+				authenticated = true;
+				out.writeLine("+JDns admin ready");
+			} else {
+				challenge = AdminAuth.newChallenge();
+				authenticated = false;
+				out.writeLine("+JDns admin ready auth=hmac-sha256 challenge="+challenge);
+			}
+		} catch (IOException e) {
+			return;
+		}
+
 		String line = null;
 		String lastLine = STATUS;
-		try {
-			out.writeLine("+JDns admin ready");
-		} catch (IOException e) {
-		}
 		while ( running ) {
 			try {
 				try {	out.flush();}catch(Exception ex){}
 
 				if((line=in.readLine())==null) {
 					running = false;
+				} else if( !authenticated ) {
+					String [] cmd = line.trim().split("[ ]+");
+					if( cmd[0].equals("auth") && cmd.length == 2 && AdminAuth.verify(secret, challenge, cmd[1]) ) {
+						authenticated = true;
+						out.writeLine("+Authenticated");
+					} else if( cmd[0].equals(QUIT) ) {
+						running = false;
+					} else if( cmd[0].equals("auth") ) {
+						log("Admin authentication failed from "+peer);
+						//  Slow down guessing
+						try { Thread.sleep(1000); } catch(InterruptedException ie) {}
+						out.writeLine("-Authentication failed");
+						running = false;
+					} else {
+						out.writeLine("-Authentication required");
+					}
 				} else {
 					if( line.length() == 0 ) {
 						line = lastLine;
@@ -662,18 +747,7 @@ public class DnsAdminProcessor  extends DnsBaseClass implements Runnable, DnsAdm
 				}
 			}			
 		}
-
-		try {	out.flush();}catch(Exception ex){}
-		if( in != null ) { try { in.close(); } catch(Exception ex) {} }
-		if( out != null ) { try { out.close(); } catch(Exception ex) {} }
-		if( sock != null ) { try { sock.close(); } catch(Exception ex) {} }
-
-		in = null;
-		out = null;
-		sock = null;
-
 	}
-
 
 	private void sendStatus(String type, DnsBaseClass [] procs) throws IOException {
 		out.writeLine("");
@@ -686,6 +760,7 @@ public class DnsAdminProcessor  extends DnsBaseClass implements Runnable, DnsAdm
 	public void start() {
 		thread = new Thread(this);
 		thread.setName("DnsAdmin");
+		thread.setDaemon(true);
 		thread.start();
 	}
 

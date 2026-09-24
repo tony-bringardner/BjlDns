@@ -25,10 +25,11 @@
  */
 package us.bringardner.net.dns.resolve;
 
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import us.bringardner.net.dns.A;
 import us.bringardner.net.dns.DNS;
@@ -49,12 +50,13 @@ import us.bringardner.net.dns.server.DnsServer;
 public class RemoteServer  extends DnsBaseClass {
 	private String nameStr;
 	private Name name;
-	private List<ServerA> addr;
+	private final List<ServerA> addr = new CopyOnWriteArrayList<ServerA>();
 	//private long lastUsed;
 	// a stating point for iteration
-	private int pos=0; 
+	//  Rotates the starting address between queries (shared by resolver threads)
+	private final AtomicInteger pos = new AtomicInteger();
 	public RemoteServer() {
-		addr = new ArrayList<ServerA>();
+
 		//lastUsed = System.currentTimeMillis();
 	}
 
@@ -106,6 +108,44 @@ public class RemoteServer  extends DnsBaseClass {
 		addr.add(new ServerA(nm,ip));
 	}
 
+	/** Most addresses kept for one zone (RFC-sized referrals have at most 13 NS). */
+	public static final int MAX_ADDRESSES = 13;
+
+	/**
+	 * Add the addresses of 'other' that this server doesn't have yet (same
+	 * IP and port), up to MAX_ADDRESSES. Existing ServerA objects, with their
+	 * statistics and deactivation state, are kept.
+	 */
+	public void mergeAddresses(RemoteServer other) {
+		if( other == null || other == this ) {
+			return;
+		}
+		synchronized (addr) {
+			for(ServerA s : other.addr) {
+				if( addr.size() >= MAX_ADDRESSES ) {
+					break;
+				}
+				if( s.getAddress() == null ) {
+					continue;
+				}
+				boolean known = false;
+				for(ServerA mine : addr) {
+					if( s.getAddress().equals(mine.getAddress()) && s.getPort() == mine.getPort() ) {
+						known = true;
+						break;
+					}
+				}
+				if( !known ) {
+					addr.add(s);
+				}
+			}
+		}
+	}
+
+	public int getAddressCount() {
+		return addr.size();
+	}
+
 	public void addAddress(RR rr) {
 		if( rr != null && rr instanceof A ) {
 			addr.add(new ServerA((A)rr));
@@ -130,10 +170,9 @@ public class RemoteServer  extends DnsBaseClass {
 	}
 
 	public Iterator<ServerA> iterator() {
-		if( pos >= addr.size() ) {
-			pos = 0;
-		}
-		return new ServerIterator(addr,pos++);
+		int size = addr.size();
+		int start = size == 0 ? 0 : Math.floorMod(pos.getAndIncrement(), size);
+		return new ServerIterator(addr,start);
 	}
 
 

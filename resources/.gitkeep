@@ -1,0 +1,2 @@
+# Keeps this folder in git: .classpath lists "resources" as a source folder,
+# and git does not store empty folders.

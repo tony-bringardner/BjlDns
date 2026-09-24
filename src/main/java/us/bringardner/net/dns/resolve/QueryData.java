@@ -98,4 +98,68 @@ public void setQuestion(Section myQuestion)
 {
 	question = myQuestion;
 }
+
+//  A CNAME in our zones pointed outside them: the name still to resolve,
+//  and the answer built so far (the CNAME chain) to complete with it.
+private volatile Section cnameTarget;
+private volatile Message partialAnswer;
+
+/** The out-of-zone name a local CNAME chain ended at, or null. */
+public Section getCnameTarget() {
+	return cnameTarget;
+}
+
+public void setCnameTarget(Section target) {
+	cnameTarget = target;
+}
+
+/** The authoritative part of the answer (CNAME chain) waiting for the resolver, or null. */
+public Message getPartialAnswer() {
+	return partialAnswer;
+}
+
+public void setPartialAnswer(Message partial) {
+	partialAnswer = partial;
+}
+
+/** What the resolver should look up: the pending CNAME target if there is one, else the question. */
+public Section getResolveQuestion() {
+	Section t = cnameTarget;
+	return t != null ? t : question;
+}
+
+/** Maximum number of CNAMEs followed for one query (server and resolver). */
+public static final int MAX_CNAME_CHAIN = 8;
+
+//  Names already visited while following CNAMEs for this query (lower case)
+private java.util.Set<String> cnameSeen;
+private int cnameCount = 0;
+
+/**
+ * Record that we are about to follow a CNAME to 'target'.
+ * 
+ * @return false if following it would loop (target already visited, including
+ * the original question name) or the chain is longer than MAX_CNAME_CHAIN.
+ */
+public synchronized boolean followCname(String target) {
+	if( cnameSeen == null ) {
+		cnameSeen = new java.util.HashSet<String>();
+		if( question != null ) {
+			cnameSeen.add(question.getName().toLowerCase());
+		}
+	}
+	if( target == null || cnameCount >= MAX_CNAME_CHAIN ) {
+		return false;
+	}
+	if( !cnameSeen.add(target.toLowerCase()) ) {
+		return false;
+	}
+	cnameCount++;
+	return true;
+}
+
+/** Number of CNAMEs followed so far. */
+public synchronized int getCnameCount() {
+	return cnameCount;
+}
 }

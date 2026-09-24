@@ -48,6 +48,8 @@ public class DnsAdminClient implements DnsAdminConstants {
 	private String adminHost;
 	private int adminPort;
 	private int timeout = 2000;
+	//  Shared secret for servers that require authentication (default: JDns.adminSecret property)
+	private String secret = System.getProperty(DnsServer.PROP_ADMIN_SECRET);
 
 	/**
 	 * AdminClient constructor comment.
@@ -138,6 +140,11 @@ public class DnsAdminClient implements DnsAdminConstants {
 		this.adminPort = adminPort;
 	}
 
+	/** Shared secret used to answer the server's challenge (JDns.adminSecret on the server). */
+	public void setSecret(String secret) {
+		this.secret = secret;
+	}
+
 	public int getTimeout() {
 		return timeout;
 	}
@@ -154,8 +161,22 @@ public class DnsAdminClient implements DnsAdminConstants {
 			in = new CRLFLineReader(sock.getInputStream());
 			out = new CRLFLineWriter(sock.getOutputStream());
 			String tmp = in.readLine();
-			if( tmp.startsWith("+")) {
-				ret = true;
+			if( tmp != null && tmp.startsWith("+")) {
+				String challenge = AdminAuth.challengeFrom(tmp);
+				if( challenge == null ) {
+					ret = true;
+				} else if( secret == null || secret.trim().isEmpty() ) {
+					System.out.println("Server requires authentication: set the secret ("+DnsServer.PROP_ADMIN_SECRET+")");
+				} else {
+					out.writeLine("auth "+AdminAuth.response(secret.trim(), challenge));
+					out.flush();
+					tmp = in.readLine();
+					if( tmp != null && tmp.startsWith("+") ) {
+						ret = true;
+					} else {
+						System.out.println("Authentication failed: "+tmp);
+					}
+				}
 			} else {
 				System.out.println("Connected but invalid prompt from server="+tmp);
 			}

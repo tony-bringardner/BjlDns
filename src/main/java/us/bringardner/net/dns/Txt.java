@@ -71,8 +71,12 @@ public class Txt extends RR {
 	public Txt(RR rr) {
 		super(rr);
 		isBase = false;
-		dirty = true;
+		//  super(rr) has already parsed the text via setFromRdata(); the old
+		//  code set dirty = true afterwards and setFromRdata() then skipped
+		//  (text != null), so a TXT from the wire could never be serialized
+		//  again ("Txt is dirty"). rdata holds the wire bytes, which are valid.
 		setFromRdata();
+		dirty = false;
 	}
 
 	/*
