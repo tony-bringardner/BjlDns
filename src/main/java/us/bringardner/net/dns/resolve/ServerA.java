@@ -25,28 +25,48 @@
  */
 package us.bringardner.net.dns.resolve;
 
-import java.net.*;
+import java.net.InetAddress;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
-import us.bringardner.net.dns.*;
+import us.bringardner.net.dns.A;
+import us.bringardner.net.dns.DNS;
+import us.bringardner.net.dns.DnsBaseClass;
+import us.bringardner.net.dns.Message;
+import us.bringardner.net.dns.Section;
 
+/**
+ * One address of a remote (upstream) name server.
+ * <p>
+ * Thread-safe: one ServerA is shared by all ResolverThreads (through the
+ * Resolver's server map), so every query builds its own Message and all
+ * statistics / state are atomic or volatile.
+ * <p>
+ * After more than MAX_TRIES consecutive failures the server is marked
+ * inactive for DEACTIVATE ms. When that time has passed it gets one more
+ * try; if that also fails it is deactivated again.
+ */
 public class ServerA  extends DnsBaseClass
 {
 	//  One Hour
 	public static long DEACTIVATE=(1*60*60*1000);  
 	public static int MAX_TRIES=2;
-	private int msgSent = 0;
-	private int msgRec  = 0;
-	//private int ave 	= 0;
-	private int totResp = 0;
-	private long lastReq = 0;
-	private String name;
-	private String addrStr;
-	private InetAddress addr;
-	private Message qm;
-	private boolean active= true;
-	private int tries=0;
+	/** Per-attempt timeout (ms) and attempts per query sent to one upstream address */
+	public static int QUERY_TIMEOUT = 2000;
+	public static int QUERY_RETRY = 1;
 
+	private final AtomicInteger msgSent = new AtomicInteger();
+	private final AtomicInteger msgRec  = new AtomicInteger();
+	private final AtomicLong totResp = new AtomicLong();
+	private final AtomicInteger consecutiveFailures = new AtomicInteger();
+	private volatile long lastReq = 0;
+	//  Inactive until this time (ms). 0 == active
+	private volatile long inactiveUntil = 0;
 
+	private volatile String name;
+	private volatile String addrStr;
+	private volatile InetAddress addr;
+	private volatile int port = DNS.DNSPORT;
 
 	/**
 	 * Constructor for ServerA
@@ -56,7 +76,7 @@ public class ServerA  extends DnsBaseClass
 		if( addr != null ) {
 			setAddress(addr);
 		} else {
-			System.out.println("no adr for "+name);
+			log("No address for "+name+", looking up by name");
 			setAddress(n);
 		}
 	}
@@ -69,80 +89,84 @@ public class ServerA  extends DnsBaseClass
 		setAddress(rr.getAddressString());
 	}
 
+	/** Average response time (ms) over all queries sent, 0 if none sent. */
 	public int aveResponseTime() { 
-		return totResp/msgSent; 
+		int sent = msgSent.get();
+		return sent == 0 ? 0 : (int)(totResp.get()/sent); 
 	}
 	
+	/** Queries sent per response received (1 == every query answered), 0 if none answered. */
 	public int battingAve() { 
-		return msgSent / msgRec; 
+		int rec = msgRec.get();
+		return rec == 0 ? 0 : msgSent.get() / rec; 
+	}
+
+	public int getMsgSent() {
+		return msgSent.get();
+	}
+
+	public int getMsgRec() {
+		return msgRec.get();
+	}
+
+	public long getLastReq() {
+		return lastReq;
 	}
 	
 	/**
-	 * 
-	 * Creation date: (10/21/2001 6:31:18 AM)
-	 * @return boolean
+	 * @return true if this server may be queried now (never deactivated, or
+	 * the deactivation period has passed).
 	 */
 	public boolean isActive() {
-
-		if(!active ) {
-			active = (lastReq+DEACTIVATE) < System.currentTimeMillis();
-		}
-
-		return active;
+		return System.currentTimeMillis() >= inactiveUntil;
 	}
 
+	/**
+	 * Send a query to this server.
+	 * 
+	 * @return the response, or null if the server is inactive, has no
+	 * address, or did not answer.
+	 */
 	public Message query(Section q) {
-		/**
-		 * If the server is inactive return null unless the deactive time has expired
-		 * if it has then try again.  IF that try does not
-		 * succeed it will remain inactive for another hour
-		 **/
-		if( !active && (lastReq+DEACTIVATE) < System.currentTimeMillis()) {
+		if( !isActive() ) {
 			return null;
 		}
 
-
-		if ( addr == null ) {
-			return null;
-
-			//  Address was not set when created
-			/*
-		Message m = Resolver.resolve(new Section(name,DNS.A,DNS.IN));
-		if( m != null && m.getResponseCode() == DNS.NOERROR && m.getAdditionalCount() > 0 ) {
-			Iterator ii = m.answer();
-			RR a = null;
-			while( ii.hasNext() ) {
-				a = (RR)ii.next();
-				if( a instanceof A ) {
-					setAddress(((A)a).getAddressString());
-				}
-			}
-		} else {
+		InetAddress server = addr;
+		if ( server == null ) {
 			return null;
 		}
-			 */
-		}
+
+		//  A new Message for every query. The old code shared one Message per
+		//  server between all resolver threads, so one thread could send (and
+		//  receive the answer to) another thread's question.
+		Message qm = new Message();
+		qm.setServer(server);
+		qm.setPort(port);
+		qm.setQuestion(q);
+		qm.setTimeOut(QUERY_TIMEOUT);
+		qm.setRetry(QUERY_RETRY);
+
+		long start = System.currentTimeMillis();
+		lastReq = start;
+		msgSent.incrementAndGet();
 
 		Message ret = null;
-		lastReq = System.currentTimeMillis();
-		msgSent++;
-
 		try {
-			qm.setQuestion(q);
-			qm.setTimeOut(2000);
-			qm.setRetry(1);
-			//System.out.println("Try Server "+name);
 			ret = qm.query();
-		} catch(Exception ex) {}
+		} catch(Exception ex) {
+			//  Timeout or I/O error, counted as a failure below
+		}
 
-		totResp += (System.currentTimeMillis()-lastReq);
+		totResp.addAndGet(System.currentTimeMillis()-start);
 
 		if( ret != null ) {
-			msgRec++;
-			tries = 0;
+			msgRec.incrementAndGet();
+			consecutiveFailures.set(0);
+			inactiveUntil = 0;
 		} else {
-			if( ++tries > MAX_TRIES ) {
-				active = false;
+			if( consecutiveFailures.incrementAndGet() > MAX_TRIES ) {
+				inactiveUntil = System.currentTimeMillis()+DEACTIVATE;
 			}
 		}
 
@@ -150,25 +174,39 @@ public class ServerA  extends DnsBaseClass
 	}
 
 	/**
-	 * 
-	 * Creation date: (10/21/2001 6:31:18 AM)
-	 * @param newActive boolean
+	 * Force this server active (clears the failure count) or inactive for DEACTIVATE ms.
 	 */
 	public void setActive(boolean newActive) {
-		active = newActive;
+		if( newActive ) {
+			consecutiveFailures.set(0);
+			inactiveUntil = 0;
+		} else {
+			inactiveUntil = System.currentTimeMillis()+DEACTIVATE;
+		}
 	}
 
 	public final void setAddress(String ip) {
 		try {
 			addrStr = ip;
 			addr = InetAddress.getByName(ip);
-			qm = new Message();
-			qm.setServer(addr);
 		} catch(Exception ex) {
 			//  This should never throw an exception since we're using the IP address			
 			//  So I'll just assume for the moment that there is nothing to do here
 			log("Error setting addr in SearverA ip = "+ip,ex);
 		}
+	}
+
+	public InetAddress getAddress() {
+		return addr;
+	}
+
+	/** UDP/TCP port of this server (default 53). */
+	public int getPort() {
+		return port;
+	}
+
+	public void setPort(int port) {
+		this.port = port;
 	}
 	
 	public final void setName(String n) { 
@@ -176,7 +214,7 @@ public class ServerA  extends DnsBaseClass
 	}
 	
 	public String toString() {
-		return (name == null ? "" : name)+"("+addrStr+") ";
+		return (name == null ? "" : name)+"("+addrStr+(port == DNS.DNSPORT ? "" : ":"+port)+") ";
 	}
 	
 }
