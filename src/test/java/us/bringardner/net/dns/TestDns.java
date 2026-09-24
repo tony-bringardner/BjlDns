@@ -173,7 +173,7 @@ public class TestDns implements DNS {
 
 
 		if( server.isRunning()) {
-			runTests(localServerAddress, localServrPort,"foo.com","bar.com");
+		runTests(REFUSED_RCODE, localServerAddress, localServrPort,"foo.com","bar.com");
 
 			testDomain((a,name,d)->{
 				switch (a) {
@@ -194,16 +194,17 @@ public class TestDns implements DNS {
 		String domain = "flunky.bo";
 		//server.addDomain(domain);
 		mgr.doit(Action.Add, domain, null);
-		runTests(localServerAddress, localServrPort,domain);
+		runTests(REFUSED_RCODE, localServerAddress, localServrPort,domain);
 
-		// once a domain is removed we should get a NAME ERROR for any request
+		// once a domain is removed the (non-recursive) server no longer answers
+		// for it: REFUSED, not NAME ERROR (it is not authoritative any more)
 		//server.removeDomain(domain);
 		mgr.doit(Action.Delete, domain, null);
 		Message msg = new Message();
 		msg.setServer(localServerAddress);
 		msg.setPort(localServrPort);
 		Message res = msg.query(domain, A, IN);
-		assertEquals(domain+" type=A should be a NAME ERROR rcode="+res.getResponseCode(),3, res.getResponseCode());	
+		assertEquals(domain+" type=A should be REFUSED rcode="+res.getResponseCode(),REFUSED_RCODE, res.getResponseCode());
 	}
 
 
@@ -442,7 +443,20 @@ public class TestDns implements DNS {
 	}
 
 
+	/** RCODE 5: our non-recursive server refuses names it is not authoritative for */
+	private static final int REFUSED_RCODE = 5;
+
+	/** For a recursive server (e.g. the system resolver): a made-up name is NAME ERROR (3). */
 	public void runTests(String server, int port,String ... addresses) throws Exception {
+		runTests(3, server, port, addresses);
+	}
+
+	/**
+	 * @param missingRcode expected RCODE for a made-up name next to the first
+	 * address: 3 (NAME ERROR) from a recursive server, 5 (REFUSED) from our
+	 * non-recursive test server
+	 */
+	public void runTests(int missingRcode, String server, int port,String ... addresses) throws Exception {
 		Message msg = new Message();
 		msg.setServer(server);
 		msg.setPort(port);
@@ -466,9 +480,9 @@ public class TestDns implements DNS {
 
 			}
 		}
-		// test name error
+		// a name that does not exist / is not ours
 		Message res = msg.query(addresses[0]+"x", A, IN);
-		assertEquals(addresses[0]+" type=A should be a NAME ERROR rcode="+res.getResponseCode(),3, res.getResponseCode());
+		assertEquals(addresses[0]+"x type=A rcode="+res.getResponseCode(),missingRcode, res.getResponseCode());
 	}
 
 	public void testDynamic(Manager runner) throws IOException {
