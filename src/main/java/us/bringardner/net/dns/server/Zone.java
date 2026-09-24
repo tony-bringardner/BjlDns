@@ -493,7 +493,7 @@ public class Zone implements DNS {
 		String [] list = f.list();
 		if( list == null || list.length == 0 ) {
 			System.out.println("No files to load in "+f);
-			System.exit(0);
+			return;
 		}
 
 	}

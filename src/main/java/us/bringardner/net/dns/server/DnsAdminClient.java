@@ -156,7 +156,12 @@ public class DnsAdminClient implements DnsAdminConstants {
 	public boolean connect()  {
 		boolean ret = false;
 		try {
-			sock = getSocketFactory().createSocket(adminHost,adminPort);
+			javax.net.SocketFactory factory = getSocketFactory();
+			if( factory == SocketFactory.getDefault()
+					&& Boolean.parseBoolean(System.getProperty(DnsServer.PROP_ADMIN_TLS, "false").trim()) ) {
+				factory = javax.net.ssl.SSLSocketFactory.getDefault();
+			}
+			sock = factory.createSocket(adminHost,adminPort);
 			sock.setSoTimeout(getTimeout());
 			in = new CRLFLineReader(sock.getInputStream());
 			out = new CRLFLineWriter(sock.getOutputStream());
