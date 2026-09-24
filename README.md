@@ -71,6 +71,7 @@ A bind address of `localhost` means this host's own name (its network address), 
 | `TCPProcCount` | 1 | TCP acceptor threads (connections are served by the pool above) |
 | `JDns.adminBindAddress` | loopback | Admin port listen address (`0.0.0.0` for all interfaces) |
 | `JDns.adminSecret` | none | Shared secret for the admin port (challenge-response). Without it only local clients are accepted. `DnsAdminClient` reads the same property |
+| `JDns.adminTls` | false | TLS on the admin port, using the standard `javax.net.ssl.keyStore` / `keyStorePassword` properties (client: `javax.net.ssl.trustStore`). `DnsAdminClient` reads the same property. Recommended when `JDns.adminBindAddress` is not loopback: the challenge-response protects the secret, not the session |
 | `JDns.adminMaxConnections` | 8 | Admin sessions at once |
 | `JDns.adminIdleTimeout` | 600000 | Idle admin sessions are closed after this many ms |
 | `JDns.useDataBase` | only if `JDns.jdbcURL` is set | Use the database for common domains and dynamic records |

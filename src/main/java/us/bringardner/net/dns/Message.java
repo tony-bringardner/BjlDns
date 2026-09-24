@@ -934,7 +934,8 @@ TC              TrunCation - specifies that this message was truncated
 	}
 
 	public Message queryUDP(String server) throws InterruptedIOException , UnknownHostException,IOException , SocketException {
-		return queryUDP(svrAddress);
+		//  It ignored 'server' and queried svrAddress (null unless set)
+		return queryUDP(InetAddress.getByName(server));
 	}
 
 	/**
@@ -954,15 +955,14 @@ TC              TrunCation - specifies that this message was truncated
 	public Message queryUDP(InetAddress server) throws InterruptedIOException , UnknownHostException,IOException , SocketException {
 		int id = newQueryId();
 		byte [] data = toByteArray();
-		if( data.length > MAXUDPLEN ) {
-			truncateOn();
-			//  Re-write the buffer
-			ByteBuffer b = new ByteBuffer(data,0);
-			hdr.toByteArray(b);
-			dataSize = MAXUDPLEN;
+		if( data.length > MAX_UDP_PAYLOAD ) {
+			//  A query over 512 bytes can't go over UDP without EDNS. It used to
+			//  be cut at 2048 bytes (mid-record) with TC set on the query,
+			//  which servers reject as malformed; TCP takes any size.
+			return queryTCP(server);
 		}
 
-		DatagramPacket pckt = new DatagramPacket(data,dataSize,server, port);
+		DatagramPacket pckt = new DatagramPacket(data,data.length,server, port);
 		Message ret = null;
 		int rejected = 0;
 		DatagramSocket sock = new DatagramSocket();

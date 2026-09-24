@@ -117,6 +117,13 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * Without it only clients on this machine may use the admin port.
 	 */
 	public static final String PROP_ADMIN_SECRET = "JDns.adminSecret";
+	/**
+	 * true: the admin port uses TLS (SSLServerSocketFactory.getDefault(),
+	 * configured with the standard javax.net.ssl.keyStore / keyStorePassword
+	 * properties). DnsAdminClient reads the same property and then uses
+	 * SSLSocketFactory.getDefault() (javax.net.ssl.trustStore).
+	 */
+	public static final String PROP_ADMIN_TLS = "JDns.adminTls";
 	/** Most admin sessions at once (default 8). */
 	public static final String PROP_ADMIN_MAX_CONNECTIONS = "JDns.adminMaxConnections";
 	/** An idle admin session is closed after this many ms (default 600000). */
@@ -594,6 +601,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 		//  ---- Admin (the socket is opened in run())
 		setAdminPort(intProperty(PROP_ADMIN_PORT, getAdminPort()));
+		serverSocketFactory = adminSocketFactory(stringProperty(PROP_ADMIN_TLS), serverSocketFactory);
+		if( serverSocketFactory instanceof javax.net.ssl.SSLServerSocketFactory ) {
+			log("Admin port uses TLS");
+		}
 		adminBindAddress = InetAddress.getLoopbackAddress();
 		if( (tmp=stringProperty(PROP_ADMIN_BIND_ADDRESS)) != null) {
 			adminBindAddress = createBindAddress(tmp);
@@ -1433,6 +1444,19 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * Creation date: (6/16/2003 9:29:24 AM)
 	 * @param newServerSocketFactory javax.net.ServerSocketFactory
 	 */
+	/**
+	 * The admin listener's factory: JDns.adminTls=true replaces the default
+	 * (plain) factory with SSLServerSocketFactory.getDefault(); a factory set
+	 * with setServerSocketFactory is kept.
+	 */
+	static ServerSocketFactory adminSocketFactory(String tlsProperty, ServerSocketFactory current) {
+		if( tlsProperty != null && tlsProperty.trim().toLowerCase().startsWith("t")
+				&& current == ServerSocketFactory.getDefault() ) {
+			return javax.net.ssl.SSLServerSocketFactory.getDefault();
+		}
+		return current;
+	}
+
 	public static void setServerSocketFactory(javax.net.ServerSocketFactory newServerSocketFactory) {
 		serverSocketFactory = newServerSocketFactory;
 	}
