@@ -341,6 +341,59 @@ public class Zone implements DNS {
 		return ret;
 	}
 
+	/** Records at exactly this name (no wildcard match), or null. */
+	private List<RR> getExactRRs(String lowerName) {
+		java.util.Map<String,Integer> exact = exactIndex;
+		if( exact == null ) {
+			buildIndex();
+			exact = exactIndex;
+		}
+		Integer hit = exact.get(lowerName);
+		return hit == null ? null : rrs.get(hit);
+	}
+
+	/**
+	 * The delegation (zone cut, RFC 1034 4.2.1) that name is at or below:
+	 * the NS records of the highest name between the apex (exclusive) and
+	 * name (inclusive) that has NS records, or null if name is not below a
+	 * cut in this zone. Data at or below a cut is not authoritative; the
+	 * answer is a referral to those name servers.
+	 */
+	public List<RR> findDelegation(String name) {
+		String apex = getName().toLowerCase(java.util.Locale.ROOT);
+		String n = name.toLowerCase(java.util.Locale.ROOT);
+		if( n.endsWith(".") ) {
+			n = n.substring(0, n.length()-1);
+		}
+		if( apex.endsWith(".") ) {
+			apex = apex.substring(0, apex.length()-1);
+		}
+		if( !n.endsWith("."+apex) ) {
+			return null;
+		}
+		String [] labels = n.substring(0, n.length()-apex.length()-1).split("\\.");
+		String candidate = apex;
+		for(int i=labels.length-1; i >= 0; i-- ) {
+			candidate = labels[i]+"."+candidate;
+			List<RR> list = getExactRRs(candidate);
+			if( list != null ) {
+				List<RR> ns = null;
+				for(RR rr : list) {
+					if( rr.getType() == DNS.NS ) {
+						if( ns == null ) {
+							ns = new ArrayList<RR>();
+						}
+						ns.add(rr);
+					}
+				}
+				if( ns != null ) {
+					return ns;
+				}
+			}
+		}
+		return null;
+	}
+
 	/** The original linear scan (reference behaviour; used for '*' query names and by tests). */
 	int linearMatchingIndex(Name name){
 		int ret = -1;

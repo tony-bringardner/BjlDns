@@ -99,6 +99,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	/** Largest UDP response in bytes (default 512, RFC 1035). Larger answers are truncated. */
 	public static final String PROP_UDP_MAX_RESPONSE = "JDns.udpMaxResponse";
 	public static final String PROP_EDNS_UDP_SIZE = "JDns.ednsUdpSize";
+	public static final String PROP_ZONE_CUT_REFERRALS = "JDns.zoneCutReferrals";
 
 	public static final String PROP_TCP_PORT = "JDns.tcpPort";	
 	public static final String PROP_TCP_BIND_ADDRESS = "JDns.tcpBindAddress";
@@ -223,6 +224,19 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	//  TCP acceptor threads. Connections are served by a separate pool
 	//  (JDns.tcp.maxConnections), so one acceptor is enough; it was 4.
 	private int TCPProcCount = 1;
+
+	//  Answer names at or below a delegation (NS records below the apex)
+	//  with a referral. JDns.zoneCutReferrals=false restores the old
+	//  behaviour for zones that list NS records on ordinary hosts.
+	private volatile boolean zoneCutReferrals = true;
+
+	public boolean isZoneCutReferrals() {
+		return zoneCutReferrals;
+	}
+
+	public void setZoneCutReferrals(boolean on) {
+		zoneCutReferrals = on;
+	}
 
 	/** Number of TCP acceptor threads (property TCPProcCount). */
 	public int getTcpProcCount() {
@@ -532,6 +546,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		int udpTimeout = intProperty(PROP_UDP_TIMEOUT, alltimeout);
 		UDPProsessor.setMaxResponseSize(intProperty(PROP_UDP_MAX_RESPONSE, UDPProsessor.getMaxResponseSize()));
 		Edns.setServerUdpSize(intProperty(PROP_EDNS_UDP_SIZE, Edns.DEFAULT_UDP_SIZE));
+		String refs = stringProperty(PROP_ZONE_CUT_REFERRALS);
+		if( refs != null ) {
+			zoneCutReferrals = refs.trim().toLowerCase().startsWith("t");
+		}
 
 		UDPProcs = new UDPProsessor[UDPProcCount];
 		Thread t = null;
@@ -1570,6 +1588,18 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		int type = question.getType();
 		int myType = 0;
 
+		//  RFC 1034 4.3.2 step 3b: at or below a zone cut (NS records at a name
+		//  below the apex) our data is not authoritative; answer with a
+		//  referral. It used to answer NXDOMAIN for names below the cut, and
+		//  an authoritative empty answer (A queries) at the cut itself.
+		//  A dynamic entry for the name still wins.
+		if( zoneCutReferrals && !dynamic.containsKey(target) ) {
+			List<RR> cut = zone.findDelegation(target);
+			if( cut != null ) {
+				return referral(ret, zone, cut);
+			}
+		}
+
 		if( type == DNS.SOA ) {
 			Soa soa = zone.getSoa();
 			RR realrr = soa.copy();
@@ -1719,6 +1749,35 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			} else {
 				//  No ns records.  Add the domain info
 				zone.setLocalInfo(ret);
+			}
+		}
+		return ret;
+	}
+
+	/**
+	 * A referral: the delegation's NS records in the authority section and
+	 * the addresses we have for them (glue) in the additional section, not
+	 * authoritative, NOERROR (RFC 1034 4.3.2 step 3b, RFC 1035 6.2.6).
+	 * After a CNAME from our own data the answer section is kept (and so is
+	 * AA, which covers the CNAME).
+	 */
+	private Message referral(Message ret, Zone zone, List<RR> cut) {
+		if( ret.getAnswerCount() == 0 ) {
+			ret.getHeader().setAA(false);
+		}
+		ret.setResponseCodeNoError();
+		for(RR rr : cut) {
+			ret.addAuthority(rr.copy());
+		}
+		for(RR rr : cut) {
+			String host = ((Ns)rr).getNs();
+			for(int t : new int[] {DNS.A, DNS.AAAA}) {
+				RR glue = zone.getMatchingRR(host, t);
+				if( glue != null ) {
+					RR g = glue.copy();
+					g.replaceWildCards(new Name(host));
+					ret.addAdditional(g);
+				}
 			}
 		}
 		return ret;

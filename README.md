@@ -57,6 +57,7 @@ A bind address of `localhost` means this host's own name (its network address), 
 | `JDns.udpTimeout` / `JDns.tcpTimeout` | `JDns.timeout` (5000) | Socket timeouts (ms); how often listeners check for shutdown |
 | `JDns.tcpBindAddress` / `JDns.udp.bindAddress` | `JDns.bindAddress` | Per-protocol listen address |
 | `JDns.udpMaxResponse` | 512 | Largest UDP response (bytes) to clients without EDNS; bigger answers are truncated (TC) and clients retry over TCP |
+| `JDns.zoneCutReferrals` | true | Names at or below NS records below a zone's apex (a delegation) get a referral (NS + glue, not authoritative) instead of NXDOMAIN / an authoritative answer. Set false if your zones put NS records on ordinary hosts |
 | `JDns.ednsUdpSize` | 1232 | Largest UDP response to EDNS clients (512–4096; the client's own size is used if smaller). Responses echo an OPT record; EDNS versions other than 0 get BADVERS |
 | `JDns.tcpMaxConnections` | 64 | TCP connections served at once; more are closed immediately |
 | `JDns.tcpIdleTimeout` | 10000 | An idle TCP connection is closed after this many ms |
