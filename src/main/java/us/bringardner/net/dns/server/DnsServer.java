@@ -293,6 +293,88 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * @throws SQLException if it can't be opened. (It used to log and return
 	 * null, and every caller then failed with a NullPointerException.)
 	 */
+	//  One JDBC connection, kept open and reused (it used to be opened and
+	//  closed for every load, update and delete). Guarded by dbLock; database
+	//  work is rare (reloads, dynamic updates) so it is simply serialized.
+	private final Object dbLock = new Object();
+	private Connection dbConnection;
+	private long dbConnectionsOpened;
+	static final int DB_VALID_TIMEOUT_SECONDS = 2;
+
+	/** Work done with the shared connection. */
+	interface SqlWork<T> {
+		T run(Connection con) throws SQLException;
+	}
+
+	/**
+	 * Run work with the shared connection: opened on first use, checked with
+	 * isValid() before reuse (the database may have closed an idle one) and
+	 * reopened if needed. After an SQLException the connection is closed, so
+	 * the next call starts with a fresh one.
+	 * Lock order is dynamicLock, then dbLock (the dynamic update methods
+	 * call this while holding dynamicLock), so work must not take dynamicLock.
+	 */
+	<T> T withConnection(SqlWork<T> work) throws SQLException {
+		synchronized (dbLock) {
+			Connection con = dbConnection;
+			if( con != null && !isUsable(con) ) {
+				closeQuietly(con);
+				con = dbConnection = null;
+			}
+			if( con == null ) {
+				con = getConnection();
+				dbConnection = con;
+				dbConnectionsOpened++;
+			}
+			try {
+				return work.run(con);
+			} catch(SQLException | RuntimeException ex) {
+				closeQuietly(con);
+				dbConnection = null;
+				throw ex;
+			}
+		}
+	}
+
+	/** How many JDBC connections have been opened (for tests and status). */
+	long getDbConnectionsOpened() {
+		synchronized (dbLock) {
+			return dbConnectionsOpened;
+		}
+	}
+
+	/** Close the shared JDBC connection (on shutdown). */
+	void closeDbConnection() {
+		synchronized (dbLock) {
+			closeQuietly(dbConnection);
+			dbConnection = null;
+		}
+	}
+
+	private static boolean isUsable(Connection con) {
+		try {
+			return con.isValid(DB_VALID_TIMEOUT_SECONDS);
+		} catch(SQLException ex) {
+			return false;
+		} catch(AbstractMethodError ex) {
+			//  Very old (pre JDBC 4) driver without isValid
+			try {
+				return !con.isClosed();
+			} catch(SQLException e) {
+				return false;
+			}
+		}
+	}
+
+	private static void closeQuietly(AutoCloseable c) {
+		if( c != null ) {
+			try {
+				c.close();
+			} catch(Exception ex) {
+			}
+		}
+	}
+
 	private Connection getConnection() throws SQLException {
 		String jdbcClass = stringProperty("JDns.jdbcClass");
 		String url = stringProperty(PROP_JDBC_URL);
@@ -704,35 +786,24 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	private void loadCommon() {
 
 		if( useDatabase()) {
-			Connection con = null;
-			Statement stmt = null;
-			ResultSet rs = null;
-
 			try {
-				con = getConnection();
-				stmt = con.createStatement();
-
-				String sql = "select name from domains";
-
-				rs = stmt.executeQuery(sql);
-
-				while( rs.next() ) {
-					String name = rs.getString(1);
+				List<String> names = withConnection(con -> {
+					List<String> ret = new ArrayList<String>();
+					try(Statement stmt = con.createStatement();
+							ResultSet rs = stmt.executeQuery("select name from domains")) {
+						while( rs.next() ) {
+							ret.add(rs.getString(1));
+						}
+					}
+					return ret;
+				});
+				for(String name : names) {
 					common.put(name.toLowerCase(),name);
 					log("Install common domain ="+name);
-
 				}
-				try { rs.close(); } catch(Exception ex) {}
-
-
 			} catch (Throwable ex) {
 				log("Database not availible",ex);
-			} finally {
-				if( rs != null ) try { rs.close(); } catch(Exception ex) {}
-				if( stmt != null ) try { stmt.close(); } catch(Exception ex) {}
-				if( con != null ) try { con.close(); } catch(Exception ex) {}
 			}
-
 		}
 
 	}
@@ -827,50 +898,29 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	private int saveDynamic(String name, String ip, String status) throws ClassNotFoundException, SQLException {
 		int ret = -1;
 		if( useDatabase()) {
-			Connection con = null;
-			PreparedStatement stmt = null;
-
-			try {
-				con = getConnection();
-				stmt = con.prepareStatement(SQL_UPDATE_DYN_DNS);
-				stmt.setString(POS_NAME, name);
-				stmt.setString(POS_IP, ip);
-				stmt.setString(POS_STATUS, status);
-				stmt.setTimestamp(POS_LAST_UPDATE, new Timestamp(System.currentTimeMillis()));
-				ret = stmt.executeUpdate();
-			} finally {
-				if( stmt != null ) {
-					try { stmt.close(); } catch(Exception ee) {}
+			ret = withConnection(con -> {
+				try(PreparedStatement stmt = con.prepareStatement(SQL_UPDATE_DYN_DNS)) {
+					stmt.setString(POS_NAME, name);
+					stmt.setString(POS_IP, ip);
+					stmt.setString(POS_STATUS, status);
+					stmt.setTimestamp(POS_LAST_UPDATE, new Timestamp(System.currentTimeMillis()));
+					return stmt.executeUpdate();
 				}
-				if( con != null ) {
-					try { con.close(); } catch(Exception ee) {}
-				}
-			}
+			});
 		}
 		return ret;
 	}
 	private void createDynamic(String name, String ip) throws ClassNotFoundException, SQLException {
-		Connection con = null;
-		PreparedStatement stmt = null;
-
 		if( useDatabase()) {
-			try {
-				con = getConnection();
-				stmt = con	.prepareStatement(SQL_CREATE_DYN_DNS);
-				stmt.setString(POS_NAME, name);
-				stmt.setString(POS_IP, ip);
-				stmt.setString(POS_STATUS, STATUS_ACTIVE);
-				stmt.setTimestamp(POS_LAST_UPDATE, new Timestamp(System.currentTimeMillis()));
-				stmt.executeUpdate();
-
-			} finally {
-				if( stmt != null ) {
-					try { stmt.close(); } catch(Exception ee) {}
+			withConnection(con -> {
+				try(PreparedStatement stmt = con.prepareStatement(SQL_CREATE_DYN_DNS)) {
+					stmt.setString(POS_NAME, name);
+					stmt.setString(POS_IP, ip);
+					stmt.setString(POS_STATUS, STATUS_ACTIVE);
+					stmt.setTimestamp(POS_LAST_UPDATE, new Timestamp(System.currentTimeMillis()));
+					return stmt.executeUpdate();
 				}
-				if( con != null ) {
-					try { con.close(); } catch(Exception ee) {}
-				}
-			}
+			});
 		}
 	}
 
@@ -891,19 +941,23 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	private boolean loadDynamicFromDb() throws ClassNotFoundException, SQLException {
 		boolean ret = false;
 		if( useDatabase()) {
-			Connection con = null;
-			Statement stmt = null;
-			ResultSet rs = null;
 			log("Loading dynamic from database");
-
-			try {
-				con = getConnection();
-				stmt = con.createStatement();
-				rs = stmt.executeQuery(SQL_SELECT_ALL);
-
-				while(rs.next()) {
-					String name = rs.getString(1);
-					String ip = rs.getString(2);
+			//  Read the rows first, then update memory: dynamicLock is never
+			//  taken while the database connection is held (see withConnection)
+			List<String[]> dbRows = withConnection(con -> {
+				List<String[]> list = new ArrayList<String[]>();
+				try(Statement stmt = con.createStatement();
+						ResultSet rs = stmt.executeQuery(SQL_SELECT_ALL)) {
+					while(rs.next()) {
+						list.add(new String[] {rs.getString(1), rs.getString(2)});
+					}
+				}
+				return list;
+			});
+			{
+				for(String [] row : dbRows) {
+					String name = row[0];
+					String ip = row[1];
 					synchronized (dynamicLock) {
 						List<A> dyn = getDynamic(name);
 						if( dyn != null ) {
@@ -926,16 +980,6 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 					} catch (IOException e) {
 						logError("Could not save dynamic to file",e);
 					}
-				}
-			} finally {
-				if( rs != null ) {
-					try { rs.close(); } catch(Exception ee) {}
-				}
-				if( stmt != null ) {
-					try { stmt.close(); } catch(Exception ee) {}
-				}
-				if( con != null ) {
-					try { con.close(); } catch(Exception ee) {}
 				}
 			}
 		}
@@ -1947,6 +1991,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	public boolean stopAndWait(long timeoutMs) throws InterruptedException {
 		long deadline = System.currentTimeMillis()+timeoutMs;
 		stop();
+		closeDbConnection();
 		java.net.DatagramSocket udp = UDPProsessor.getSock();
 		if( udp != null ) {
 			udp.close();
