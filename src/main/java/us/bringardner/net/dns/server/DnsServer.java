@@ -220,7 +220,14 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 	private volatile boolean running = false;
 
-	private int TCPProcCount = 4;	
+	//  TCP acceptor threads. Connections are served by a separate pool
+	//  (JDns.tcp.maxConnections), so one acceptor is enough; it was 4.
+	private int TCPProcCount = 1;
+
+	/** Number of TCP acceptor threads (property TCPProcCount). */
+	public int getTcpProcCount() {
+		return TCPProcCount;
+	}	
 	private TCPProsessor [] TCPProcs;
 	private String defaultZoneName;
 	private File dynamicFile;
@@ -587,7 +594,11 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	private InetAddress createBindAddress(String tmp) throws UnknownHostException {
 		InetAddress ret = InetAddress.getLoopbackAddress();
 		if( tmp.equals("localhost")) {
+			//  Kept for compatibility, but surprising: "localhost" here means
+			//  this host's own name/address, not the loopback interface
 			ret = InetAddress.getLocalHost();
+			logError("Bind address 'localhost' means this host's address "+ret
+					+" (reachable from the network), not the loopback; use 127.0.0.1 to listen on loopback only");
 		} else {
 			ret = InetAddress.getByName(tmp);
 		}
@@ -1703,7 +1714,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				ret = null;
 			} else {
 				//  Backlog full: say so now instead of dropping the query
-				logError("Resolver backlog full, SERVFAIL for "+question.getQuestion());
+				logBacklogFull();
 				ret = us.bringardner.net.dns.resolve.ResolverThread.failure(question, DNS.SERVER_ERROR);
 			}
 		} else {
@@ -1750,10 +1761,19 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		if( us.bringardner.net.dns.resolve.ResolverThread.addQuery(req) ) {
 			return null;
 		}
-		logError("Resolver backlog full, answering "+partial.getFirstQuestion()+" with the CNAME chain only");
+		//  The chain alone is a valid answer: the client's resolver restarts
+		//  the lookup at the target (RFC 1034 4.3.2 step 3a)
+		logBacklogFull();
 		req.setPartialAnswer(null);
 		req.setCnameTarget(null);
 		return partial;
+	}
+
+	private void logBacklogFull() {
+		String msg = us.bringardner.net.dns.resolve.ResolverThread.backlogFullWarning();
+		if( msg != null ) {
+			logError(msg);
+		}
 	}
 
 	/** Resolve in the calling thread; null if it fails. */

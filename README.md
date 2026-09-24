@@ -50,6 +50,8 @@ WantedBy=multi-user.target
 
 Set in the properties file (`JDns.properties`) or with `-D`. Besides the existing ones (`JDns.dnsPort`, `JDns.bindAddress`, `JDns.zone.dir`, `JDns.master.zone`, ...):
 
+A bind address of `localhost` means this host's own name (its network address), not the loopback interface, so the server is reachable from the network; a warning is logged. Use `127.0.0.1` to listen on loopback only.
+
 | Property | Default | Meaning |
 |---|---|---|
 | `JDns.udpTimeout` / `JDns.tcpTimeout` | `JDns.timeout` (5000) | Socket timeouts (ms); how often listeners check for shutdown |
@@ -64,7 +66,8 @@ Set in the properties file (`JDns.properties`) or with `-D`. Besides the existin
 | `JDns.maxNegativeTtl` | 10800 | Upper bound (s) for caching "does not exist" answers |
 | `JDns.maxDelegations` | 10000 | Learned delegations kept (LRU) |
 | `JDns.delegationMaxAge` | 3600 | Seconds a learned delegation is used before a fresh referral replaces it |
-| `Resolver.maxBacklog` | 20 | Queued recursive queries; when full, clients get SERVFAIL |
+| `Resolver.maxBacklog` | 200 | Queued recursive queries; when full, clients get SERVFAIL (a CNAME answer is sent without the target's records). Logged at most every 10 s |
+| `TCPProcCount` | 1 | TCP acceptor threads (connections are served by the pool above) |
 | `JDns.adminBindAddress` | loopback | Admin port listen address (`0.0.0.0` for all interfaces) |
 | `JDns.adminSecret` | none | Shared secret for the admin port (challenge-response). Without it only local clients are accepted. `DnsAdminClient` reads the same property |
 | `JDns.adminMaxConnections` | 8 | Admin sessions at once |
