@@ -108,6 +108,44 @@ public class RemoteServer  extends DnsBaseClass {
 		addr.add(new ServerA(nm,ip));
 	}
 
+	/** Most addresses kept for one zone (RFC-sized referrals have at most 13 NS). */
+	public static final int MAX_ADDRESSES = 13;
+
+	/**
+	 * Add the addresses of 'other' that this server doesn't have yet (same
+	 * IP and port), up to MAX_ADDRESSES. Existing ServerA objects, with their
+	 * statistics and deactivation state, are kept.
+	 */
+	public void mergeAddresses(RemoteServer other) {
+		if( other == null || other == this ) {
+			return;
+		}
+		synchronized (addr) {
+			for(ServerA s : other.addr) {
+				if( addr.size() >= MAX_ADDRESSES ) {
+					break;
+				}
+				if( s.getAddress() == null ) {
+					continue;
+				}
+				boolean known = false;
+				for(ServerA mine : addr) {
+					if( s.getAddress().equals(mine.getAddress()) && s.getPort() == mine.getPort() ) {
+						known = true;
+						break;
+					}
+				}
+				if( !known ) {
+					addr.add(s);
+				}
+			}
+		}
+	}
+
+	public int getAddressCount() {
+		return addr.size();
+	}
+
 	public void addAddress(RR rr) {
 		if( rr != null && rr instanceof A ) {
 			addr.add(new ServerA((A)rr));
