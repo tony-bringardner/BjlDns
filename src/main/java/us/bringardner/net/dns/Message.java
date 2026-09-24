@@ -53,6 +53,8 @@ import us.bringardner.core.ILogger.Level;
 public class Message extends Utility {
 	private long initTime;
 	private boolean udp   = true;;
+	//  Retry over TCP when a UDP answer comes back truncated (TC)
+	private boolean tcpFallback = true;
 	private boolean defname   = false;
 	private int qtype = A;
 	private int dnsClass = IN;
@@ -97,6 +99,7 @@ public class Message extends Utility {
 		ret.udp = udp;
 		ret.port = port;
 		ret.retry = retry;
+		ret.tcpFallback = tcpFallback;
 		ret.server = server;
 		ret.svrAddress = svrAddress;
 		ret.setLogger(getLogger());
@@ -1017,7 +1020,65 @@ TC              TrunCation - specifies that this message was truncated
 		if( isDebugEnabled() ) {
 			logDebug("msg = "+ret);
 		}
+		if( ret.isTruncated() && tcpFallback ) {
+			//  The answer didn't fit in UDP; get the whole thing over TCP
+			//  (RFC 1035 4.2.1) instead of using / caching a partial answer.
+			logDebug("Truncated UDP answer from "+server+" for "+getFirstQuestion()+", retrying over TCP");
+			return queryTCP(server);
+		}
 		return ret;
+	}
+
+	/** @return true if queryUDP() retries over TCP when the answer is truncated (default true) */
+	public boolean isTcpFallback() {
+		return tcpFallback;
+	}
+
+	public void setTcpFallback(boolean tcpFallback) {
+		this.tcpFallback = tcpFallback;
+	}
+
+	/**
+	 * Serialize for a transport that carries at most maxLen bytes, e.g. a UDP
+	 * response (RFC 1035 4.2.1, RFC 2181 9):
+	 * <ol>
+	 * <li>the whole message, if it fits;</li>
+	 * <li>otherwise without the additional section; TC is not set because
+	 *     the answer itself is complete;</li>
+	 * <li>otherwise only the header and question with TC set, so the client
+	 *     retries over TCP.</li>
+	 * </ol>
+	 * This message is not modified (it may be shared, e.g. from a cache).
+	 */
+	public byte [] toByteArray(int maxLen) {
+		byte [] full = sectionsCopy(true,true,true).toByteArray();
+		if( full.length <= maxLen ) {
+			return full;
+		}
+		byte [] noAdditional = sectionsCopy(true,true,false).toByteArray();
+		if( noAdditional.length <= maxLen ) {
+			return noAdditional;
+		}
+		Message tc = sectionsCopy(false,false,false);
+		tc.hdr.setTC(true);
+		return tc.toByteArray();
+	}
+
+	/** A shallow copy of header, question and the selected sections (for serializing). */
+	private Message sectionsCopy(boolean answer, boolean authority, boolean additional) {
+		Message m = new Message();
+		m.hdr = hdr.copy();
+		m.que = new ArrayList<Section>(que);
+		if( answer ) {
+			m.ans = new ArrayList<RR>(ans);
+		}
+		if( authority ) {
+			m.ath = new ArrayList<RR>(ath);
+		}
+		if( additional ) {
+			m.add = new ArrayList<RR>(add);
+		}
+		return m;
 	}
 
 	private static final SecureRandom ID_RANDOM = new SecureRandom();

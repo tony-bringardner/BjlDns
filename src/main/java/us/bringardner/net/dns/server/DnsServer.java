@@ -95,6 +95,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	public static final String PROP_UDP_BIND_ADDRESS = "JDns.udp.bindAddress";
 	public static final String PROP_UDP_PORT = "JDns.udpPort";
 	public static final String PROP_UDP_TIMEOUT = "JDns.udpTimeout";
+	/** Largest UDP response in bytes (default 512, RFC 1035). Larger answers are truncated. */
+	public static final String PROP_UDP_MAX_RESPONSE = "JDns.udpMaxResponse";
 
 	public static final String PROP_TCP_PORT = "JDns.tcpPort";	
 	public static final String PROP_TCP_BIND_ADDRESS = "JDns.tcpBindAddress";
@@ -428,6 +430,9 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		UDPProcs = new UDPProsessor[UDPProcCount];
 		Thread t = null;
 		log("UDP BindAddress = "+bindAddress+":"+port+" timout="+udpTimeout);
+		if( (tmp=getProperty(PROP_UDP_MAX_RESPONSE)) != null) {
+			UDPProsessor.setMaxResponseSize(Integer.parseInt(tmp.trim()));
+		}
 		UDPProsessor.initUDPProsessor(port,address,udpTimeout);
 
 		for(int i=0; i< UDPProcs.length; i++ ) {
