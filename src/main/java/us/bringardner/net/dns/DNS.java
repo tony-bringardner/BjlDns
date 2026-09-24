@@ -53,7 +53,10 @@ public interface DNS {
 	/**
 	Maximum UDP Packet length (512)  Larger messages must be TCP
 	**/
+		/** Size of UDP receive buffers (not the response limit, see MAX_UDP_PAYLOAD) */
 		static final int MAXUDPLEN   = 1024*2;// 512;
+		/** RFC 1035 2.3.4: largest UDP message a client without EDNS accepts */
+		static final int MAX_UDP_PAYLOAD = 512;
 
 		//  TYPE values appear in the RR Records (these are also QTYPEs)
 	/** QTYPE (Question Type) Values (Host Record) **/

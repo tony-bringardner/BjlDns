@@ -58,6 +58,16 @@ public class UDPProsessor extends DnsRequestProcessor implements Runnable
 	//private boolean running = false;
 	private long timer=0;
 	public static volatile boolean debug = false;
+	//  Largest UDP response we send (RFC 1035: 512 without EDNS). Bigger answers are truncated (TC).
+	private static volatile int maxResponseSize = DNS.MAX_UDP_PAYLOAD;
+
+	public static int getMaxResponseSize() {
+		return maxResponseSize;
+	}
+
+	public static void setMaxResponseSize(int size) {
+		maxResponseSize = Math.max(DNS.MAX_UDP_PAYLOAD, size);
+	}
 	public static PrintStream dumpBuf;
 	
 /**
@@ -151,7 +161,8 @@ public void run ()
 				client = recPckt.getAddress();
 				port = recPckt.getPort();
 				
-				buf = new ByteBuffer(recPckt.getData());
+				//  Parse only the bytes received, not the rest of the 2K buffer
+				buf = new ByteBuffer(java.util.Arrays.copyOf(recPckt.getData(), recPckt.getLength()));
 				if ( debug ) {
 					buf.dump();
 				}
@@ -233,17 +244,10 @@ public void sendResponse(Message msg)
 	setState("SendResponse Begin");
 
 	if( msg != null ) {
-		byte [] data = msg.toByteArray();
+		//  Fit the response into maxResponseSize (drops additional records,
+		//  or sets TC so the client retries over TCP)
+		byte [] data = msg.toByteArray(maxResponseSize);
 		int dataSize = data.length;
-	
-		/*
-		 TODO: What should happen here?
-		if( data.length > MAXUDPLEN ) {
-			msg.truncateOn();
-			data = msg.toByteArray();;
-			dataSize = MAXUDPLEN;
-		}
-		 */
 		setState("SendResponse getPacket");
 		DatagramPacket pckt = new DatagramPacket(data,dataSize,client,port);
 	

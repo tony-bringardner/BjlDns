@@ -147,14 +147,10 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 			//  Just in case;
 			msg.setID(query.getMessage().getID());
 
-			byte [] data = msg.toByteArray();
+			//  The old code cut the byte array at MAXUDPLEN (a corrupt packet
+			//  ending mid-record) and set TC on the shared message.
+			byte [] data = msg.toByteArray(us.bringardner.net.dns.server.UDPProsessor.getMaxResponseSize());
 			int dataSize = data.length;
-
-			if( data.length > DNS.MAXUDPLEN ) {
-				msg.truncateOn();
-				data = msg.toByteArray();;
-				dataSize = DNS.MAXUDPLEN;
-			}
 
 			setState("SendResponse getPacket");
 			DatagramPacket pckt = new DatagramPacket(data,dataSize,query.getClient(),query.getPort());
