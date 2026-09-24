@@ -476,7 +476,7 @@ public class DnsAdminProcessor  extends DnsBaseClass implements Runnable, DnsAdm
 	private CRLFLineReader in;
 	private CRLFLineWriter out;
 	private Thread thread;
-	private boolean running = false;
+	private volatile boolean running = false;
 	private DnsServer server;
 
 	//  Default timeout = 1min

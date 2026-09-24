@@ -54,7 +54,7 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 
 	//private int myNumber = 0;
 	//private boolean running = false;
-	public static boolean debug = false;
+	public static volatile boolean debug = false;
 
 	
 	private Socket clientSock;	

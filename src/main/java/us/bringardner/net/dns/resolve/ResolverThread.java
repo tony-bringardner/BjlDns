@@ -39,8 +39,9 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 {
 	private static final String PROP_RESOLVER_BACKLOG = "Resolver.maxBacklog";
 	private static SimpleObjectFIFO fifo;
-	private Thread thread;
-	private boolean running = false;
+	private volatile Thread thread;
+	//  Set to false by stop() from another thread
+	private volatile boolean running = false;
 
 
 	private DatagramSocket sock;

@@ -57,7 +57,7 @@ public class UDPProsessor extends DnsRequestProcessor implements Runnable
 	//private int myNumber = 0;
 	//private boolean running = false;
 	private long timer=0;
-	public static boolean debug = false;	
+	public static volatile boolean debug = false;
 	public static PrintStream dumpBuf;
 	
 /**
