@@ -39,7 +39,6 @@ import us.bringardner.net.dns.Name;
 import us.bringardner.net.dns.Ns;
 import us.bringardner.net.dns.RR;
 import us.bringardner.net.dns.Section;
-import us.bringardner.net.dns.server.DnsServer;
 
 
 /**
@@ -168,10 +167,20 @@ public class RemoteServer  extends DnsBaseClass {
 		return ret;
 	}
 
+	/**
+	 * Addresses in the order to try them: never-answered ones first (so they
+	 * get measured), then by smoothed response time, fastest first. Equal
+	 * ones keep a rotating order to spread the load.
+	 */
 	public Iterator<ServerA> iterator() {
-		int size = addr.size();
-		int start = size == 0 ? 0 : Math.floorMod(pos.getAndIncrement(), size);
-		return new ServerIterator(addr,start);
+		java.util.List<ServerA> list = new java.util.ArrayList<ServerA>(addr);
+		int size = list.size();
+		if( size > 1 ) {
+			java.util.Collections.rotate(list, -Math.floorMod(pos.getAndIncrement(), size));
+			//  stable sort: rotation decides among equal response times
+			list.sort(java.util.Comparator.comparingLong(ServerA::getSrtt));
+		}
+		return list.iterator();
 	}
 
 
@@ -187,16 +196,25 @@ public class RemoteServer  extends DnsBaseClass {
 		return name.matchCount(n.getName());
 	}
 
-	public Message resolve(Section nm, long maxTime) {
+	/**
+	 * Ask this zone's servers, fastest first, until one answers or the
+	 * deadline passes. Each server's timeout adapts to its response time and
+	 * never runs past the deadline. (Debug mode no longer ignores the deadline.)
+	 */
+	public Message resolve(Section nm, long deadline) {
 		Message ret = null;
 		ServerA svr = null;
-
-		//boolean db = DnsServer.isDebug();
-		
 		Iterator<ServerA> it = this.iterator();
-		while( it.hasNext() && (System.currentTimeMillis() < maxTime || DnsServer.isDebug())) {
+		while( it.hasNext() ) {
+			long remaining = deadline - System.currentTimeMillis();
+			if( remaining <= 0 ) {
+				break;
+			}
 			svr = (ServerA)it.next();
-			if( (ret=svr.query(nm)) != null ) {
+			if( !svr.isActive() ) {
+				continue;
+			}
+			if( (ret=svr.query(nm, svr.timeoutFor(remaining))) != null ) {
 				if( ret.getResponseCode() == DNS.NAME_ERROR ) {
 					//lastUsed = System.currentTimeMillis();
 					return ret;

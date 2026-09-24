@@ -179,7 +179,40 @@ public class ServerA  extends DnsBaseClass
 	 * @return the response, or null if the server is inactive, has no
 	 * address, or did not answer.
 	 */
+	/** Shortest timeout used for a server whose response time is known (ms). */
+	public static int MIN_QUERY_TIMEOUT = 300;
+	/** Smoothed response time in ms (EWMA, 1/8 weight), 0 if never answered. */
+	private volatile double srtt = 0;
+
+	/** Smoothed response time (ms); 0 if this server has never answered. */
+	public long getSrtt() {
+		return Math.round(srtt);
+	}
+
+	/** Record a response time (or a failure penalty) in the smoothed average. */
+	private synchronized void recordRtt(long ms) {
+		srtt = srtt == 0 ? ms : (7*srtt + ms) / 8;
+	}
+
+	/**
+	 * Timeout for the next query: about twice the smoothed response time
+	 * (MIN_QUERY_TIMEOUT..QUERY_TIMEOUT) once it is known, QUERY_TIMEOUT
+	 * before that, never more than 'remaining'.
+	 */
+	public int timeoutFor(long remaining) {
+		long t = srtt > 0 ? Math.max(MIN_QUERY_TIMEOUT, Math.min(QUERY_TIMEOUT, Math.round(srtt*2)+100)) : QUERY_TIMEOUT;
+		return (int)Math.max(1, Math.min(t, remaining));
+	}
+
 	public Message query(Section q) {
+		return query(q, QUERY_TIMEOUT);
+	}
+
+	/**
+	 * Send a query to this server, waiting at most timeoutMs per attempt.
+	 * @return the response, or null (inactive, no address, no answer)
+	 */
+	public Message query(Section q, int timeoutMs) {
 		if( !isActive() ) {
 			return null;
 		}
@@ -203,7 +236,7 @@ public class ServerA  extends DnsBaseClass
 		qm.setServer(server);
 		qm.setPort(port);
 		qm.setQuestion(q);
-		qm.setTimeOut(QUERY_TIMEOUT);
+		qm.setTimeOut(Math.max(1, timeoutMs));
 		qm.setRetry(QUERY_RETRY);
 
 		long start = System.currentTimeMillis();
@@ -217,13 +250,16 @@ public class ServerA  extends DnsBaseClass
 			//  Timeout or I/O error, counted as a failure below
 		}
 
-		totResp.addAndGet(System.currentTimeMillis()-start);
-
+		long rtt = System.currentTimeMillis()-start;
+		totResp.addAndGet(rtt);
 		if( ret != null ) {
 			msgRec.incrementAndGet();
+			recordRtt(Math.max(1, rtt));
 			consecutiveFailures.set(0);
 			inactiveUntil = 0;
 		} else {
+			//  A timeout counts as a slow answer so the server sorts behind responsive ones
+			recordRtt(Math.max(rtt, QUERY_TIMEOUT) * 2L);
 			if( consecutiveFailures.incrementAndGet() > MAX_TRIES ) {
 				inactiveUntil = System.currentTimeMillis()+DEACTIVATE;
 			}
