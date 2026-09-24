@@ -112,6 +112,44 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 	}
 
 	/**
+	 * One response for a CNAME chain from our zones that points outside them:
+	 * the question and CNAME records of 'partial' followed by the records
+	 * resolved for the target. The RCODE is the target's (RFC 6604); AA is off
+	 * because part of the answer is not ours. If the target could not be
+	 * resolved (resolved == null) the chain is returned with SERVFAIL.
+	 */
+	public static Message completeCnameAnswer(Message partial, Message resolved) {
+		Message ret = new Message();
+		us.bringardner.net.dns.Header h = partial.getHeader().copy();
+		h.setAA(false);
+		h.setTC(false);
+		h.setRA(true);
+		ret.setHeader(h);
+		ret.setMessageTypeResponse();
+		for(Section q : partial.getQuestion()) {
+			ret.addQuestion(new Section(q));
+		}
+		for(RR rr : partial.getAnswer()) {
+			ret.addAnswer(rr);
+		}
+		if( resolved == null ) {
+			ret.setResponseCode(DNS.SERVER_ERROR);
+			return ret;
+		}
+		for(RR rr : resolved.getAnswer()) {
+			ret.addAnswer(rr);
+		}
+		for(RR rr : resolved.getAuthority()) {
+			ret.addAuthority(rr);
+		}
+		for(RR rr : resolved.getAdditional()) {
+			ret.addAdditional(rr);
+		}
+		ret.setResponseCode(resolved.getResponseCode());
+		return ret;
+	}
+
+	/**
 	 * A response to 'query' with no data and the given RCODE (e.g. SERVFAIL):
 	 * same ID, opcode, RD and question as the request, QR=1, RA=1, AA=0.
 	 */
@@ -185,13 +223,21 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 				if( running && question != null ) {
 					setState("Call Resolver:"+question);
 					Message msg = null;
+					Section toResolve = question.getResolveQuestion();
 					try {
-						msg = Resolver.resolve(question.getQuestion());
+						msg = Resolver.resolve(toResolve);
 					} catch(RuntimeException | StackOverflowError ex) {
-						logError("Resolver failed for "+question.getQuestion(), ex);
+						logError("Resolver failed for "+toResolve, ex);
 					}
 					setState("Returned from resolver");
-					if( msg == null ) {
+					Message partial = question.getPartialAnswer();
+					if( partial != null ) {
+						//  Complete a local CNAME chain that pointed outside our zones
+						if( msg == null ) {
+							failed.incrementAndGet();
+						}
+						msg = completeCnameAnswer(partial, msg);
+					} else if( msg == null ) {
 						//  No answer (all servers timed out, no servers, or an error):
 						//  tell the client instead of leaving it to time out.
 						failed.incrementAndGet();

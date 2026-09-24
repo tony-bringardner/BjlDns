@@ -1161,6 +1161,9 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				retMsg.setMessageTypeResponse();
 				retMsg.setQuestion(s);
 				retMsg = step2(req,retMsg);
+				if( retMsg != null && req.getCnameTarget() != null ) {
+					retMsg = completeOutOfZoneCname(req, retMsg);
+				}
 				ret.add(retMsg);
 			}			
 		}
@@ -1523,8 +1526,24 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 							//  which used to recurse until StackOverflowError.
 							String cname = ((Cname)realrr).getCname();
 							if( query.followCname(cname) ) {
-								query.setQuestion(new Section(cname,type,question.getDnsClass()));
-								step2(query,ret);
+								Section next = new Section(cname,type,question.getDnsClass());
+								if( isLocalName(next) ) {
+									//  Chase it in our own zones; the request's question
+									//  is restored afterwards (it used to stay changed).
+									query.setQuestion(next);
+									try {
+										step2(query,ret);
+									} finally {
+										query.setQuestion(question);
+									}
+								} else {
+									//  The chain leaves our zones: stop here. query()
+									//  completes it through the resolver when recursion is
+									//  available and desired, as ONE response. (It used to
+									//  send the CNAME alone and then a second response for
+									//  the target's question with the same ID.)
+									query.setCnameTarget(next);
+								}
 							} else {
 								logError("CNAME loop or chain too long at "+target+" -> "+cname
 										+" (followed "+query.getCnameCount()+"), answering with the chain so far");
@@ -1628,6 +1647,53 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 		return ret;
 
+	}
+
+	/** @return true if the name is in one of our zones (or a 'common' domain) */
+	private boolean isLocalName(Section s) {
+		return getZone(s) != null || isCommon(s);
+	}
+
+	/**
+	 * Our zone answered with a CNAME chain that ends outside our zones
+	 * (req.getCnameTarget()).
+	 * <ul>
+	 * <li>No recursion (not available or not desired): the chain is the
+	 *     authoritative answer, NOERROR; the client follows the rest.</li>
+	 * <li>TCP: resolve the target now and answer chain + target.</li>
+	 * <li>UDP: a resolver thread resolves the target and sends chain + target
+	 *     (returns null: nothing to send now). If its backlog is full the
+	 *     chain is sent as it is.</li>
+	 * </ul>
+	 */
+	private Message completeOutOfZoneCname(QueryData req, Message partial) {
+		if( !recursionAvailable || !req.getMessage().isRecursiveDesired() ) {
+			req.setCnameTarget(null);
+			return partial;
+		}
+		if( req.getPort() == -1 ) {
+			Message resolved = resolveOrNull(req.getCnameTarget());
+			req.setCnameTarget(null);
+			return us.bringardner.net.dns.resolve.ResolverThread.completeCnameAnswer(partial, resolved);
+		}
+		req.setPartialAnswer(partial);
+		if( us.bringardner.net.dns.resolve.ResolverThread.addQuery(req) ) {
+			return null;
+		}
+		logError("Resolver backlog full, answering "+partial.getFirstQuestion()+" with the CNAME chain only");
+		req.setPartialAnswer(null);
+		req.setCnameTarget(null);
+		return partial;
+	}
+
+	/** Resolve in the calling thread; null if it fails. */
+	private Message resolveOrNull(Section s) {
+		try {
+			return Resolver.resolve(s);
+		} catch(RuntimeException | StackOverflowError ex) {
+			logError("Resolver failed for "+s, ex);
+			return null;
+		}
 	}
 
 	/**
