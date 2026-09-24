@@ -132,21 +132,87 @@ public class Name implements DNS
 		return hasWildCard;
 	}
 	
+	/** Maximum number of compression pointers followed while reading a single name. */
+	public static final int MAX_POINTER_JUMPS = 128;
+	/** RFC 1035 2.3.4: a domain name is limited to 255 octets on the wire. */
+	public static final int MAX_WIRE_LENGTH = 255;
+
+	/**
+	 * Read a (possibly compressed) name from the wire.
+	 * 
+	 * Hardened against malicious input (RFC 1035 4.1.4 / RFC 9267):
+	 * <ul>
+	 * <li>every compression pointer must point strictly before the start of the
+	 *     segment currently being read, so pointer chains always move backwards
+	 *     and must terminate (no loops),</li>
+	 * <li>at most MAX_POINTER_JUMPS pointers are followed,</li>
+	 * <li>the expanded name may not exceed MAX_WIRE_LENGTH octets,</li>
+	 * <li>labels may not run past the end of the buffer,</li>
+	 * <li>the reserved label types (0x40, 0x80) are rejected.</li>
+	 * </ul>
+	 * As before, the caller's buffer is advanced past the name (or past the
+	 * first pointer); bytes read after a jump do not move the caller's buffer.
+	 * 
+	 * @throws DnsFormatException if the name is malformed
+	 */
 	private void init(ByteBuffer in) {
 		myLables = new ArrayList<Label>();
 		chrCount = 0;
 
-		in = in.chkPointer();           
-		int cnt = in.next();
-		while(cnt > 0 ) {
+		byte [] buf = in.getBuf();
+		ByteBuffer cur = in;
+		int segmentStart = in.getReadPos();
+		int jumps = 0;
+		int wireLen = 0;
+
+		while( true ) {
+			int pos = cur.getReadPos();
+			if( pos < 0 || pos >= buf.length ) {
+				throw new DnsFormatException("Name runs past end of message at offset "+pos);
+			}
+			int cnt = buf[pos] & 0xff;
+			int labelType = cnt & DNS.POINTER;
+
+			if( labelType == DNS.POINTER ) {
+				if( pos + 1 >= buf.length ) {
+					throw new DnsFormatException("Truncated compression pointer at offset "+pos);
+				}
+				int target = cur.nextShort() & 0x3FFF;
+				if( ++jumps > MAX_POINTER_JUMPS ) {
+					throw new DnsFormatException("Too many compression pointers in name (>"+MAX_POINTER_JUMPS+")");
+				}
+				if( target >= segmentStart ) {
+					throw new DnsFormatException("Compression pointer at offset "+pos+" to offset "+target
+							+" does not point backwards (loop)");
+				}
+				cur = new ByteBuffer(buf,target);
+				segmentStart = target;
+				continue;
+			}
+
+			if( labelType != 0 ) {
+				throw new DnsFormatException("Unsupported label type 0x"+Integer.toHexString(labelType)+" at offset "+pos);
+			}
+
+			// length octet
+			cur.next();
+			wireLen += cnt + 1;
+			if( wireLen > MAX_WIRE_LENGTH ) {
+				throw new DnsFormatException("Name exceeds "+MAX_WIRE_LENGTH+" octets");
+			}
+			if( cnt == 0 ) {
+				break;
+			}
+			if( pos + 1 + cnt > buf.length ) {
+				throw new DnsFormatException("Label at offset "+pos+" runs past end of message");
+			}
+
 			chrCount += cnt;
-			StringBuffer sb = new StringBuffer();
+			StringBuilder sb = new StringBuilder(cnt);
 			for(int i=0; i< cnt; i++) {
-				sb.append((char)in.next());
+				sb.append((char)cur.next());
 			}
 			addLabel(new Label(sb.toString()));
-			in = in.chkPointer();           
-			cnt = in.next();
 		}
 	}
 	

@@ -113,12 +113,30 @@ Convert to a human readable String (name/address)
 Set the address of this host from a String representation in dot notation (999.999.999.999)
 	 **/
 	public void setAddress(String c) {
+		if( c == null ) {
+			throw new IllegalArgumentException("Invalid IPv4 address: null");
+		}
+		String addr = c.trim();
+		// -1 keeps trailing empty parts so "1.2.3.4." is rejected
+		String parts[] = addr.split("[.]",-1);
+		if( parts.length != 4 ) {
+			throw new IllegalArgumentException("Invalid IPv4 address (need 4 octets): '"+c+"'");
+		}
 		byte [] tmp =  new byte[4];
-		String parts[] = c.split("[.]");
 		for (int idx = 0; idx < parts.length; idx++) {
-			int i = Integer.parseInt(parts[idx]);
-			if( i<1 || i>255) {
-				throw new RuntimeException("Invalid value for address at pos "+idx+" value="+parts[idx]);
+			String part = parts[idx];
+			if( part.isEmpty() || part.length() > 3 ) {
+				throw new IllegalArgumentException("Invalid value for address at pos "+idx+" value='"+part+"' in '"+c+"'");
+			}
+			for(int j=0; j< part.length(); j++ ) {
+				char ch = part.charAt(j);
+				if( ch < '0' || ch > '9' ) {
+					throw new IllegalArgumentException("Invalid value for address at pos "+idx+" value='"+part+"' in '"+c+"'");
+				}
+			}
+			int i = Integer.parseInt(part);
+			if( i<0 || i>255) {
+				throw new IllegalArgumentException("Invalid value for address at pos "+idx+" value="+part+" in '"+c+"'");
 			}
 			tmp[idx] = (byte)i;
 		}

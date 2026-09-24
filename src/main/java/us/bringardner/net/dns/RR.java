@@ -205,6 +205,9 @@ public  class RR extends Section
 		if( !dirty ) {
 			try {
 				setFromRdata();
+			} catch(DnsFormatException ex) {
+				// Malformed rdata (e.g. a compression loop in a CNAME/NS/MX target)
+				throw ex;
 			} catch(Exception ex) {
 				ex.printStackTrace(System.err);
 				throw new IllegalArgumentException(ex);
