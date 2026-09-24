@@ -33,10 +33,12 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 import us.bringardner.net.dns.Cname;
 import us.bringardner.net.dns.DNS;
@@ -383,19 +385,36 @@ public class Resolver  extends DnsBaseClass
 	}
 	
 	public static Message resolve(Section question) {
-		Message ret = null;
-
 		incStart();
 		long time = System.currentTimeMillis();
 
-		if( (ret=cache.get(question)) == null ) {
+		Message ret = resolveChain(question, new HashSet<String>(), 0);
+
+		incComplted((int)(System.currentTimeMillis()-time),question);
+
+		return ret;
+	}
+
+	/**
+	 * Resolve 'question', following a CNAME answer to its target.
+	 * <p>
+	 * The chain is limited to QueryData.MAX_CNAME_CHAIN hops and a name is
+	 * never followed twice, so a loop (a -> b -> a) ends with the chain found
+	 * so far instead of recursing until StackOverflowError.
+	 * 
+	 * @param seen lower case names already visited in this chain
+	 * @param depth number of CNAMEs followed so far
+	 */
+	private static Message resolveChain(Section question, Set<String> seen, int depth) {
+		seen.add(question.getName().toLowerCase());
+
+		Message ret = cache.get(question);
+		if( ret == null ) {
 			//  Nothing in cache, search for it
 			if( (ret=resolve(question, getServers(question))) != null ) {
 				cache.put(ret);						
 			}
 		}
-
-
 
 		//  If this is the first time for a CNAME, AnswerCount should be 1
 		//  If it's grater than that, it's already been combined
@@ -403,7 +422,13 @@ public class Resolver  extends DnsBaseClass
 			//  Check for CNAME
 			RR rr = (RR)ret.getAnswer().get(0);
 			if( rr.getType() == DNS.CNAME && question.getType() != DNS.CNAME ) {
-				Message ret2 = resolve(new Section(((Cname)rr).getCname(),question.getType(),question.getDnsClass()));
+				String target = ((Cname)rr).getCname();
+				if( depth >= QueryData.MAX_CNAME_CHAIN || seen.contains(target.toLowerCase()) ) {
+					new Resolver().logError("CNAME loop or chain too long at "+question.getName()+" -> "+target
+							+" (followed "+depth+"), returning the chain so far");
+					return ret;
+				}
+				Message ret2 = resolveChain(new Section(target,question.getType(),question.getDnsClass()), seen, depth+1);
 				if( ret2 == null ) {
 					ret = ret2;
 				} else {
@@ -416,10 +441,12 @@ public class Resolver  extends DnsBaseClass
 			}
 		}
 
-
-		incComplted((int)(System.currentTimeMillis()-time),question);
-
 		return ret;
+	}
+
+	/** For tests: the live cache. */
+	static Cache getCache() {
+		return cache;
 	}
 
 	private static Message resolve(Section question, List<RemoteServer> slist) {
