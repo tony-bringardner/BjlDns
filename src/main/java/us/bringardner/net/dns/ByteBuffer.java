@@ -81,6 +81,7 @@ public  class ByteBuffer {
 		Check to see if there is a pointer at the current position (a pointer is described in RFC 1035)
 		@return A ByteBuffer representing the current position with pointers dereferenced
 	 **/
+	@Deprecated // No loop protection. Name parsing now follows pointers itself with bounds checks (see Name.init).
 	public ByteBuffer chkPointer() {
 
 		/*

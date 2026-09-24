@@ -34,6 +34,8 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 
 import us.bringardner.net.dns.ByteBuffer;
+import us.bringardner.net.dns.DNS;
+import us.bringardner.net.dns.DnsFormatException;
 import us.bringardner.net.dns.Message;
 import us.bringardner.net.dns.resolve.QueryData;
 /**
@@ -160,6 +162,17 @@ public void run ()
 					process(query);
 				}
 				setState("Running after process");
+			} catch(DnsFormatException ex) {
+				// Malformed packet (e.g. compression loop). Answer FORMERR and keep going.
+				setState("Running format error");
+				if( DnsServer.isDebug() ) {
+					log("Malformed UDP packet from "+client+":"+port+" "+ex.getMessage());
+				}
+				sendFormatError(recPckt.getData(), recPckt.getLength());
+			} catch(StackOverflowError ex) {
+				// Never let a single packet kill this worker thread
+				log("StackOverflowError processing UDP packet from "+client+":"+port);
+				setState("Running StackOverflowError");
 			} catch(Exception ex) {
 				log("Unexpected exception in UDPPRocessor.run",ex);
 				setState("Running error from process");
@@ -175,6 +188,40 @@ public void run ()
 	
 	setState("Running End");
 }
+/**
+ * Reply FORMERR (RFC 1035 4.1.1, RCODE 1) to a request that could not be parsed.
+ * Only the 12 byte header is echoed (ID, opcode and RD are preserved), with no question.
+ * Nothing is sent if the packet is shorter than a header or is itself a response
+ * (QR set), so we can't be used to bounce garbage back and forth.
+ */
+void sendFormatError(byte [] packet, int length) {
+	byte [] reply = buildFormatError(packet, length);
+	if( reply == null ) {
+		return;
+	}
+	try {
+		sock.send(new DatagramPacket(reply,reply.length,client,port));
+	} catch(IOException ex) {
+		log("IOException sending FORMERR",ex);
+	}
+}
+
+/**
+ * Build a FORMERR reply header for a malformed request, or null if none should be sent.
+ */
+public static byte [] buildFormatError(byte [] packet, int length) {
+	if( packet == null || length < 12 || (packet[2] & 0x80) != 0 ) {
+		return null;
+	}
+	byte [] reply = new byte[12];
+	reply[0] = packet[0];                                // ID
+	reply[1] = packet[1];
+	reply[2] = (byte)(0x80 | (packet[2] & 0x79));        // QR=1, keep OPCODE and RD, clear AA/TC
+	reply[3] = (byte)DNS.FORMAT_ERROR;                   // RA=0, Z=0, RCODE=1
+	// QDCOUNT, ANCOUNT, NSCOUNT, ARCOUNT all zero
+	return reply;
+}
+
 /**
  * Insert the method's description here.
  * Creation date: (8/26/2001 10:41:48 AM)

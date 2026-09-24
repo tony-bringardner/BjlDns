@@ -34,6 +34,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 
 import us.bringardner.net.dns.ByteBuffer;
+import us.bringardner.net.dns.DnsFormatException;
 import us.bringardner.net.dns.Message;
 import us.bringardner.net.dns.Utility;
 import us.bringardner.net.dns.resolve.QueryData;
@@ -162,15 +163,28 @@ public void run ()
 					Message msg = new Message(buf);
 					QueryData query = new QueryData(client,-1,msg);
 					process(query);
+				} catch(DnsFormatException ex) {
+					// Malformed message: answer FORMERR and drop the connection
+					// (framing can't be trusted after a bad message).
+					setState("Running format error");
+					if( DnsServer.isDebug() ) {
+						log("Malformed TCP message from "+client+" "+ex.getMessage());
+					}
+					sendFormatError(data);
+					done = true;
 				} catch(IOException ex) {
 					done=true;			
 				}
 			}
 				
+			} catch(StackOverflowError ex) {
+				// Never let a single message kill this worker thread
+				log("StackOverflowError processing TCP message from "+client);
+				setState("Running StackOverflowError");
 			} catch(Exception ex) {
 				log("Unexpected exception in TCPProcessor.run",ex);
 				setState("Running Exception go again");				
-				if( buf != null ) {
+				if( buf != null && UDPProsessor.dumpBuf != null ) {
 					ex.printStackTrace(UDPProsessor.dumpBuf);
 					UDPProsessor.dumpBuf.println("TCP Exception "+client);
 					buf.dump(UDPProsessor.dumpBuf);
@@ -182,6 +196,26 @@ public void run ()
 	}
 	setState("Running Exit");
 }
+/**
+ * Reply FORMERR to a TCP request that could not be parsed.
+ */
+private void sendFormatError(byte [] data) {
+	byte [] reply = UDPProsessor.buildFormatError(data, data == null ? 0 : data.length);
+	if( reply == null ) {
+		return;
+	}
+	try {
+		OutputStream out = clientSock.getOutputStream();
+		byte [] sz = new byte[2];
+		Utility.setShort(sz,0,reply.length);
+		out.write(sz);
+		out.write(reply);
+		out.flush();
+	} catch(IOException ex) {
+		log("IOException sending FORMERR",ex);
+	}
+}
+
 /**
  * 
  * Creation date: (8/26/2001 10:41:48 AM)
