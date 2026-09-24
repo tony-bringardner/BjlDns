@@ -99,6 +99,35 @@ public void setQuestion(Section myQuestion)
 	question = myQuestion;
 }
 
+//  A CNAME in our zones pointed outside them: the name still to resolve,
+//  and the answer built so far (the CNAME chain) to complete with it.
+private volatile Section cnameTarget;
+private volatile Message partialAnswer;
+
+/** The out-of-zone name a local CNAME chain ended at, or null. */
+public Section getCnameTarget() {
+	return cnameTarget;
+}
+
+public void setCnameTarget(Section target) {
+	cnameTarget = target;
+}
+
+/** The authoritative part of the answer (CNAME chain) waiting for the resolver, or null. */
+public Message getPartialAnswer() {
+	return partialAnswer;
+}
+
+public void setPartialAnswer(Message partial) {
+	partialAnswer = partial;
+}
+
+/** What the resolver should look up: the pending CNAME target if there is one, else the question. */
+public Section getResolveQuestion() {
+	Section t = cnameTarget;
+	return t != null ? t : question;
+}
+
 /** Maximum number of CNAMEs followed for one query (server and resolver). */
 public static final int MAX_CNAME_CHAIN = 8;
 
