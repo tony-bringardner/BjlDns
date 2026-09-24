@@ -1077,6 +1077,15 @@ TC              TrunCation - specifies that this message was truncated
 		}
 		if( additional ) {
 			m.add = new ArrayList<RR>(add);
+		} else {
+			//  The OPT record stays even when the rest of the additional
+			//  section is dropped (RFC 6891 7: truncated responses keep it)
+			m.add = new ArrayList<RR>();
+			for(RR rr : add) {
+				if( rr.getType() == DNS.OPT ) {
+					m.add.add(rr);
+				}
+			}
 		}
 		return m;
 	}
