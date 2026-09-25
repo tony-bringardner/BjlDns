@@ -128,6 +128,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	public static final String PROP_ADMIN_MAX_CONNECTIONS = "JDns.adminMaxConnections";
 	/** An idle admin session is closed after this many ms (default 600000). */
 	public static final String PROP_ADMIN_IDLE_TIMEOUT = "JDns.adminIdleTimeout";
+	/** Longest admin command line in bytes (default 8192); a longer one ends the session. */
+	public static final String PROP_ADMIN_MAX_LINE = "JDns.adminMaxLine";
+	/** With JDns.adminSecret set, a session that has not authenticated after this many ms is closed (default 30000). */
+	public static final String PROP_ADMIN_AUTH_TIMEOUT = "JDns.adminAuthTimeout";
 
 
 
@@ -159,6 +163,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	//  Limits concurrent admin sessions (each had its own unbounded thread)
 	private volatile java.util.concurrent.Semaphore adminSlots = new java.util.concurrent.Semaphore(8);
 	private volatile int adminIdleTimeout = 10*60*1000;
+	private volatile int adminMaxLine = DnsAdminProcessor.DEFAULT_MAX_LINE;
+	private volatile int adminAuthTimeout = DnsAdminProcessor.DEFAULT_AUTH_TIMEOUT;
 	//  UDP/TCP processor threads started by initServer (for stopAndWait)
 	private final List<Thread> workers = new java.util.concurrent.CopyOnWriteArrayList<Thread>();
 	private static volatile boolean shutdown = false;
@@ -655,6 +661,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		}
 		adminSlots = new java.util.concurrent.Semaphore(Math.max(1, intProperty(PROP_ADMIN_MAX_CONNECTIONS, 8)));
 		adminIdleTimeout = intProperty(PROP_ADMIN_IDLE_TIMEOUT, adminIdleTimeout);
+		adminMaxLine = intProperty(PROP_ADMIN_MAX_LINE, adminMaxLine);
+		adminAuthTimeout = intProperty(PROP_ADMIN_AUTH_TIMEOUT, adminAuthTimeout);
 		if( stringProperty(PROP_ADMIN_SECRET) == null && !adminBindAddress.isLoopbackAddress() ) {
 			logError("Admin port listens on "+adminBindAddress+" but "+PROP_ADMIN_SECRET
 					+" is not set: only clients on this machine will be accepted");
@@ -714,6 +722,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		try {
 			DnsAdminProcessor admin = new DnsAdminProcessor(this,clientSocket);
 			admin.setTimeout(adminIdleTimeout);
+			admin.setMaxLine(adminMaxLine);
+			admin.setAuthTimeout(adminAuthTimeout);
 			admin.setOnFinish(slots::release);
 			admin.start();
 			return true;
@@ -726,6 +736,16 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			}
 			return false;
 		}
+	}
+
+	/** Longest admin line in bytes (initServer reads JDns.adminMaxLine). */
+	void setAdminMaxLine(int maxLine) {
+		adminMaxLine = maxLine;
+	}
+
+	/** ms an admin client has to authenticate (initServer reads JDns.adminAuthTimeout). */
+	void setAdminAuthTimeout(int ms) {
+		adminAuthTimeout = ms;
 	}
 
 	/** Set the most admin sessions at once (initServer reads JDns.adminMaxConnections). */

@@ -480,8 +480,27 @@ public class DnsAdminProcessor  extends DnsBaseClass implements Runnable, DnsAdm
 	private DnsServer server;
 	private volatile Runnable onFinish;
 
-	//  Default timeout = 1min
+	//  Default idle timeout = 10 min
 	private int timeout = 60*1000*10;
+
+	/** Default for JDns.adminMaxLine: longest admin line in bytes. */
+	public static final int DEFAULT_MAX_LINE = 8*1024;
+	/** Default for JDns.adminAuthTimeout: ms a client has to authenticate. */
+	public static final int DEFAULT_AUTH_TIMEOUT = 30*1000;
+
+	private LineLimitInputStream limitedIn;
+	private int authTimeout = DEFAULT_AUTH_TIMEOUT;
+	private volatile boolean authenticated;
+
+	//  Closes sessions that have not authenticated in time. A client that sends
+	//  a byte now and then never hits the socket (idle) timeout, so it could
+	//  hold an admin slot for ever; 8 such clients locked out the admin port.
+	private static final java.util.concurrent.ScheduledExecutorService authTimer =
+			java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+				Thread t = new Thread(r, "DnsAdminAuthTimer");
+				t.setDaemon(true);
+				return t;
+			});
 
 
 	public static void main(String args[] ) {
@@ -499,7 +518,8 @@ public class DnsAdminProcessor  extends DnsBaseClass implements Runnable, DnsAdm
 		this.server = server;
 		this.sock = sock;
 		sock.setSoTimeout(5000);
-		in = new CRLFLineReader(sock.getInputStream());
+		limitedIn = new LineLimitInputStream(sock.getInputStream(), DEFAULT_MAX_LINE);
+		in = new CRLFLineReader(limitedIn);
 		out= new CRLFLineWriter(sock.getOutputStream());
 	}
 
@@ -621,6 +641,16 @@ public class DnsAdminProcessor  extends DnsBaseClass implements Runnable, DnsAdm
 		this.timeout = timeout;
 	}
 
+	/** Longest line (bytes) the client may send; a longer one ends the session (JDns.adminMaxLine). */
+	public void setMaxLine(int maxLine) {
+		limitedIn.setMaxLine(maxLine);
+	}
+
+	/** ms a client has to authenticate when JDns.adminSecret is set (JDns.adminAuthTimeout). */
+	public void setAuthTimeout(int authTimeout) {
+		this.authTimeout = Math.max(1, authTimeout);
+	}
+
 	/** JDns.adminSecret, or null if not set */
 	private String adminSecret() {
 		String s = server.getProperty(DnsServer.PROP_ADMIN_SECRET);
@@ -671,8 +701,8 @@ public class DnsAdminProcessor  extends DnsBaseClass implements Runnable, DnsAdm
 
 		String secret = adminSecret();
 		String challenge = null;
-		boolean authenticated;
 		InetAddress peer = sock.getInetAddress();
+		java.util.concurrent.ScheduledFuture<?> authDeadline = null;
 
 		try {
 			if( secret == null ) {
@@ -686,11 +716,34 @@ public class DnsAdminProcessor  extends DnsBaseClass implements Runnable, DnsAdm
 			} else {
 				challenge = AdminAuth.newChallenge();
 				authenticated = false;
+				final Socket s = sock;
+				authDeadline = authTimer.schedule(() -> {
+					if( !authenticated ) {
+						log(() -> "Admin session from "+peer+" did not authenticate within "+authTimeout+" ms");
+						try {
+							s.close();
+						} catch(IOException ex) {
+						}
+					}
+				}, authTimeout, java.util.concurrent.TimeUnit.MILLISECONDS);
 				out.writeLine("+JDns admin ready auth=hmac-sha256 challenge="+challenge);
 			}
 		} catch (IOException e) {
+			if( authDeadline != null ) {
+				authDeadline.cancel(false);
+			}
 			return;
 		}
+		try {
+			commands(secret, challenge, peer);
+		} finally {
+			if( authDeadline != null ) {
+				authDeadline.cancel(false);
+			}
+		}
+	}
+
+	private void commands(String secret, String challenge, InetAddress peer) {
 
 		String line = null;
 		String lastLine = STATUS;
@@ -734,6 +787,13 @@ public class DnsAdminProcessor  extends DnsBaseClass implements Runnable, DnsAdm
 
 				}
 
+			} catch(LineLimitInputStream.LineTooLongException ex) {
+				log(() -> "Admin session from "+peer+" closed: "+ex.getMessage());
+				try {
+					out.writeLine("-Line too long (max "+limitedIn.getMaxLine()+" bytes)");
+				} catch(IOException ee) {
+				}
+				running = false;
 			} catch(IOException ex) {
 				log("Error processing cmd="+line,ex);
 				running = false;

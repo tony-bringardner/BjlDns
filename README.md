@@ -76,5 +76,7 @@ A bind address of `localhost` means this host's own name (its network address), 
 | `JDns.adminTls` | false | TLS on the admin port, using the standard `javax.net.ssl.keyStore` / `keyStorePassword` properties (client: `javax.net.ssl.trustStore`). `DnsAdminClient` reads the same property. Recommended when `JDns.adminBindAddress` is not loopback: the challenge-response protects the secret, not the session |
 | `JDns.adminMaxConnections` | 8 | Admin sessions at once |
 | `JDns.adminIdleTimeout` | 600000 | Idle admin sessions are closed after this many ms |
+| `JDns.adminMaxLine` | 8192 | Longest admin command line in bytes; a longer line ends the session |
+| `JDns.adminAuthTimeout` | 30000 | With `JDns.adminSecret` set, a session that hasn't authenticated after this many ms is closed |
 | `JDns.useDataBase` | only if `JDns.jdbcURL` is set | Use the database for common domains and dynamic records |
 | `JDns.exitOnFatalError` | true (standalone) | Halt the process on a JVM error (see above) |
