@@ -78,6 +78,10 @@ public class TestZoneReload {
 		final File a;
 		final File b;
 		final DnsServer server = new DnsServer();
+		//  Restored in close(): left behind, they pointed later tests (TestDns)
+		//  at a deleted zone directory.
+		final String savedZoneDir = System.getProperty(DnsServer.PROP_ZONE_DIR);
+		final String savedDefaultZone = System.getProperty(DnsServer.PROP_DEFAULT_ZONE);
 
 		Fixture() throws IOException {
 			dir = Files.createTempDirectory("zones").toFile();
@@ -92,10 +96,20 @@ public class TestZoneReload {
 
 		@Override
 		public void close() {
+			restore(DnsServer.PROP_ZONE_DIR, savedZoneDir);
+			restore(DnsServer.PROP_DEFAULT_ZONE, savedDefaultZone);
 			for(File f : dir.listFiles()) {
 				f.delete();
 			}
 			dir.delete();
+		}
+
+		private void restore(String key, String value) {
+			if( value == null ) {
+				System.clearProperty(key);
+			} else {
+				System.setProperty(key, value);
+			}
 		}
 	}
 

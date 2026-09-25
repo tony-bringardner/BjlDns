@@ -163,6 +163,7 @@ public class TestUdpTruncation {
 		try(DatagramSocket probe = new DatagramSocket(0, InetAddress.getLoopbackAddress())) {
 			port = probe.getLocalPort();
 		}
+		DnsServer.setShutdown(false);
 		UDPProsessor.initUDPProsessor(port, InetAddress.getLoopbackAddress(), 200);
 		TCPProsessor.initTCPProsessor(port, 5, InetAddress.getLoopbackAddress(), 200);
 		Thread u = new Thread(new UDPProsessor(server,0),"TestUDP");

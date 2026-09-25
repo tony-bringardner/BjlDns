@@ -164,6 +164,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	private static volatile boolean shutdown = false;
 	private static volatile boolean _debug = true;
 	private boolean standAlone=false;
+	//  Startup outcome for awaitStarted(): the latch opens when run() is either
+	//  serving or has given up; startupFailure says which.
+	private volatile java.util.concurrent.CountDownLatch startLatch = new java.util.concurrent.CountDownLatch(1);
+	private volatile StartupException startupFailure;
 	private java.util.Date startTime = new java.util.Date();
 
 	//  Recursion Available
@@ -294,6 +298,46 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 	public boolean isRunning() {
 		return running;
+	}
+
+	/**
+	 * Why the server could not start (see {@link DnsServer#awaitStarted(long)}).
+	 * The exit code is what main() exits with: -1 when the configuration, zones or
+	 * UDP/TCP sockets could not be set up, -2 when the admin socket could not be opened.
+	 */
+	public static class StartupException extends IOException {
+		private static final long serialVersionUID = 1L;
+		private final int exitCode;
+
+		public StartupException(String message, Throwable cause, int exitCode) {
+			super(message, cause);
+			this.exitCode = exitCode;
+		}
+
+		public int getExitCode() {
+			return exitCode;
+		}
+	}
+
+	/**
+	 * Wait until the server started by {@link #start()} is serving.
+	 * 
+	 * @param timeoutMs how long to wait (0 or less: no limit)
+	 * @throws StartupException if the server could not start; everything it had
+	 *   started (UDP/TCP threads, resolver) has been stopped again
+	 * @throws IOException if it has not finished starting within timeoutMs
+	 */
+	public void awaitStarted(long timeoutMs) throws IOException, InterruptedException {
+		java.util.concurrent.CountDownLatch latch = startLatch;
+		if( timeoutMs <= 0 ) {
+			latch.await();
+		} else if( !latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) ) {
+			throw new IOException("DNS server did not start within "+timeoutMs+" ms");
+		}
+		StartupException ex = startupFailure;
+		if( ex != null ) {
+			throw ex;
+		}
 	}
 
 	/**
@@ -1255,12 +1299,16 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 		us.bringardner.net.dns.server.DnsServer svr = new DnsServer();
 		svr.start(true);
-		while(!svr.running) {
-			try {
-				Thread.sleep(50);
-			} catch (InterruptedException e) {
-				return;
-			}
+		try {
+			svr.awaitStarted(0);
+		} catch (StartupException e) {
+			//  Only the program's entry point decides to end the process
+			//  (a non-zero code, so a supervisor can restart it).
+			svr.logError("Exiting with "+e.getExitCode());
+			System.exit(e.getExitCode());
+		} catch (IOException | InterruptedException e) {
+			svr.logError("Exiting with -1", e);
+			System.exit(-1);
 		}
 
 		while(svr.isRunning()) {
@@ -1331,14 +1379,14 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 	public void run() {
 		
+		//  A failure to start is reported to awaitStarted() (main() turns it into
+		//  the process exit code). This used to call System.exit() here when
+		//  started stand-alone, which also ended any program or test run that
+		//  embedded the server.
 		try {
 			initServer();
 		} catch (Throwable e1) {
-			log("Can't init server",e1);
-			if( standAlone) {
-				logError("Exiting with -1");
-				System.exit(-1);				
-			}
+			failedToStart(new StartupException("Can't init server: "+e1, e1, -1));
 			return;
 		}
 
@@ -1353,13 +1401,67 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			log("Started dnsAdmin on "+adminBindAddress+":"+port);
 			setState("Running got socket");
 		} catch(IOException ex) {
-			log("Can't create server socket on port "+getAdminPort(),ex);
-			setState("Failed to start");
-			if( standAlone) {
-				System.exit(-2);
-			}
+			failedToStart(new StartupException("Can't create admin socket on "+adminBindAddress+":"+getAdminPort()+": "+ex, ex, -2));
 			return;
 		}
+		startLatch.countDown();
+		try {
+			serve(svrSock);
+		} finally {
+			try {
+				svrSock.close();
+			} catch(IOException ex) {
+			}
+		}
+	}
+
+	/**
+	 * Record why the server could not start, stop what initServer() had already
+	 * started, and release awaitStarted().
+	 */
+	private void failedToStart(StartupException ex) {
+		logError(ex.getMessage(), ex.getCause());
+		setState("Failed to start");
+		running = false;
+		try {
+			closeListeners();
+			TCPProsessor.shutdownConnections(2000);
+			for(Thread w : workers) {
+				w.join(5000);
+			}
+			workers.clear();
+			Resolver.shutDown();
+			closeDbConnection();
+		} catch(InterruptedException ie) {
+			Thread.currentThread().interrupt();
+		} catch(RuntimeException re) {
+			logError("Error cleaning up after a failed start", re);
+		} finally {
+			startupFailure = ex;
+			startLatch.countDown();
+		}
+	}
+
+	/**
+	 * Close the UDP and TCP listening sockets. Their threads end when the socket
+	 * is closed, without setting the (JVM wide) shutdown flag.
+	 */
+	private static void closeListeners() {
+		java.net.DatagramSocket udp = UDPProsessor.getSock();
+		if( udp != null ) {
+			udp.close();
+		}
+		ServerSocket tcp = TCPProsessor.getServerSocket();
+		if( tcp != null ) {
+			try {
+				tcp.close();
+			} catch(IOException ex) {
+			}
+		}
+	}
+
+	/** The admin loop: serve admin connections and periodic reloads until stopped. */
+	private void serve(ServerSocket svrSock) {
 
 
 
@@ -1473,9 +1575,18 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		start(false);
 	}
 
+	/**
+	 * Start the server in its own thread. Use {@link #awaitStarted(long)} to wait
+	 * until it is serving (or to learn why it could not start).
+	 * 
+	 * @param standAlone kept for compatibility; a failed start no longer exits the JVM
+	 *   (main() does that, using awaitStarted()).
+	 */
 	public void start(boolean standAlone) {
 		if( !running ) {
 			this.standAlone = standAlone;
+			startupFailure = null;
+			startLatch = new java.util.concurrent.CountDownLatch(1);
 			thread = new Thread(this);
 			thread.setName("DNS-Server");
 			thread.setDaemon(true);
@@ -2056,7 +2167,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		running = false;
 		shutdown = true;
 		Thread t = thread;
-		if( t != null ) {
+		if( t != null && t != Thread.currentThread() ) {
 			t.interrupt();
 		}
 		Resolver.shutDown();
@@ -2075,17 +2186,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		long deadline = System.currentTimeMillis()+timeoutMs;
 		stop();
 		closeDbConnection();
-		java.net.DatagramSocket udp = UDPProsessor.getSock();
-		if( udp != null ) {
-			udp.close();
-		}
-		ServerSocket tcp = TCPProsessor.getServerSocket();
-		if( tcp != null ) {
-			try {
-				tcp.close();
-			} catch(IOException ex) {
-			}
-		}
+		closeListeners();
 		long remaining = deadline - System.currentTimeMillis();
 		boolean ret = TCPProsessor.shutdownConnections(Math.max(1, remaining));
 		for(Thread w : workers) {
