@@ -45,9 +45,18 @@ import java.util.regex.Pattern;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import us.bringardner.net.dns.util.NsLookup;
 
+/**
+ * Live test: replays TestFiles/NsLookupTestData.txt against the real root
+ * servers, so it needs unfiltered DNS (UDP and TCP port 53) and the recorded
+ * answers (e.g. the number of A records for irs.gov) must still be current.
+ * Run with -DliveTests=true (mvn test -DliveTests=true).
+ * TestNsLookupOffline covers NsLookup without the internet.
+ */
+@EnabledIfSystemProperty(named = "liveTests", matches = "true")
 public class TestNsLookup implements DNS {
 
 	static class NsLookupTestData {
@@ -198,9 +207,6 @@ public class TestNsLookup implements DNS {
 				NsLookupTestData actual = actualSession.get(idx);
 				NsLookupTestData expect = session.get(idx);
 				if(!expect.equals(actual)) {
-					if( !expect.cmd.equals(actual.cmd) ) {
-						showCompare(expect.cmd,actual.cmd);
-					}
 					if( !expect.response.equals(actual.response) ) {
 						if( NsLookup.getMsg().isDebug()) {
 							String[] el = expect.response.split("\n");
@@ -209,7 +215,6 @@ public class TestNsLookup implements DNS {
 								continue;
 							}
 						}
-						//showCompare(expect.response,actual.response);
 					}
 				}
 				assertEquals(expect, actual,"NsLookupTestData does not match. idx="+idx);
@@ -220,17 +225,6 @@ public class TestNsLookup implements DNS {
 
 	}
 
-	private void showCompare(String exp, String act) {
-		CompareTextFrame.showFrame(exp, act);
-		while(true) {
-			try {
-				Thread.sleep(10000);
-			} catch (InterruptedException e) {
-				// Not implemented
-				e.printStackTrace();
-			}
-		}
-	}
 
 
 }

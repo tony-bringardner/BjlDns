@@ -263,8 +263,26 @@ public class NsLookup extends Utility {
 		return ret;
 	}
 
+	/** Most servers asked for one name (a looping delegation used to recurse until StackOverflowError). */
+	static final int MAX_REFERRALS = 16;
+
 	private static Message doRecursion(Message msg2, Message ret1) throws IOException {
+		java.util.Set<String> asked = new java.util.HashSet<String>();
+		asked.add(serverKey(msg2));
+		return doRecursion(msg2, ret1, asked);
+	}
+
+	/** address:port of the server a Message is sent to (getServer() is InetAddress.toString(): "name/address"). */
+	private static String serverKey(Message m) {
+		String s = String.valueOf(m.getServer());
+		return s.substring(s.lastIndexOf('/')+1)+":"+m.getPort();
+	}
+
+	private static Message doRecursion(Message msg2, Message ret1, java.util.Set<String> asked) throws IOException {
 		Message ret2 = ret1;
+		if( asked.size() > MAX_REFERRALS ) {
+			return ret2;
+		}
 		if(msg2.isResponseCodeNoError() && msg2.isRecursive()) {
 			if(!ret1.isAuthority()) {
 				for(Iterator<RR> e1=ret1.authority(); e1.hasNext(); ) {
@@ -281,9 +299,13 @@ public class NsLookup extends Utility {
 						} else {
 							m2.setServer(svr);
 						}
+						//  Don't ask the same server twice (a referral back to it is a loop)
+						if( !asked.add(serverKey(m2)) ) {
+							continue;
+						}
 						Message tmp  = m2.query();
 						if( tmp != null && tmp.isResponseCodeNoError() ) {
-							ret2 = doRecursion(msg2, tmp);
+							ret2 = doRecursion(msg2, tmp, asked);
 							break;
 						}
 					}
@@ -325,31 +347,37 @@ public class NsLookup extends Utility {
 		try {
 
 
-			int startArg = 0;			
-			msg.setServer(getDnsServer());
+			//  Options: -s SERVER and -p PORT. The root server search (getDnsServer)
+			//  only happens when no server is given, so '-s' also works without
+			//  access to the root servers (it used to query them first anyway, and
+			//  then processed '-s' and the server name as names to look up).
+			int startArg = 0;
+			String server = null;
+			int port = DNSPORT;
+			while( startArg+1 < args.length && (args[startArg].equals("-s") || args[startArg].equals("-p")) ) {
+				if( args[startArg].equals("-s") ) {
+					server = args[startArg+1];
+				} else {
+					port = Integer.parseInt(args[startArg+1]);
+				}
+				startArg += 2;
+			}
+			msg.setServer(server != null ? server : getDnsServer());
+			msg.setPort(port);
 			msg.recursiveDesiredOn();
 			msg.setRecursiveAvailable(true);
 			msg.debugOff();
-			
-			if( args.length>1) {
-				if( args[0].equals("-s")) {
-					msg.setServer(args[1]);
-					startArg = 2;
-				}
-			}
+
 			if( args.length > startArg) {
-				for (int idx = 0; idx < args.length; idx++) {
+				for (int idx = startArg; idx < args.length; idx++) {
 					processCmd(args[idx]);
 				}
 
 			} else {
 				String cmd = "";
 
-				if( args.length > 0 ) {
-					for(int i=0; i< args.length; i++ ) {
-						processCmd(args[i]);
-					}
-				} else {
+				//  (The options were processed again here as names to look up.)
+				{
 					//out.print("Server "+msg.getServer()+" ready\n\n> ");
 					out.print("\n> ");
 

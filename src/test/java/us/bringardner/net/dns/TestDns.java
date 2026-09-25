@@ -40,6 +40,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import us.bringardner.net.dns.server.DnsAdminClient;
 import us.bringardner.net.dns.server.DnsServer;
@@ -184,14 +185,15 @@ public class TestDns implements DNS {
 	}
 
 
+	/** Needs the real root servers (UDP and TCP port 53): run with -DliveTests=true. */
+	@Test
+	@EnabledIfSystemProperty(named = "liveTests", matches = "true")
+	public void testRootServers() throws Exception {
+		runTests(NsLookup.getDnsServer(), DNS.DNSPORT,"google.com","irs.gov");
+	}
+
 	@Test
 	public void testServers() throws Exception {
-
-
-
-		runTests(NsLookup.getDnsServer(), DNS.DNSPORT,"google.com","irs.gov");
-
-
 		if( server.isRunning()) {
 		runTests(REFUSED_RCODE, localServerAddress, localServrPort,"foo.com","bar.com");
 
