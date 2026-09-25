@@ -30,6 +30,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
@@ -93,6 +95,8 @@ public class TestDns implements DNS {
 
 	Map<String,String> expected = new HashMap<String, String>();
 	private static DnsServer server;
+	private static File dynamicDir;
+	private static String savedDynamicFile;
 
 	private static String localServerAddress;
 
@@ -106,6 +110,15 @@ public class TestDns implements DNS {
 		System.setProperty(DnsServer.PROP_DNS_PROPERTIRS, "TestFiles/TestDns.properties");
 		System.setProperty("LogLevel","ERROR");
 		System.setProperty("JDns.useDataBase","false");
+		//  The server rewrites the dynamic file on every admin change, so work on a
+		//  copy instead of the checked-in TestFiles/dynamic.txt. (The properties
+		//  file's path was also resolved twice against JDns.dnsDir, so
+		//  testDynamic failed with "No such file or directory".)
+		dynamicDir = Files.createTempDirectory("testdns").toFile();
+		File dynamicCopy = new File(dynamicDir,"dynamic.txt");
+		Files.copy(new File("src/test/java/resources/TestFiles/dynamic.txt").toPath(), dynamicCopy.toPath(), StandardCopyOption.REPLACE_EXISTING);
+		savedDynamicFile = System.getProperty(DnsServer.PROP_DYNAMIC);
+		System.setProperty(DnsServer.PROP_DYNAMIC, dynamicCopy.getAbsolutePath());
 
 
 
@@ -140,6 +153,17 @@ public class TestDns implements DNS {
 			//  UDP/TCP processors of tests that ran after this one.
 			server.stopAndWait(10_000);
 			DnsServer.setShutdown(false);
+		}
+		if( savedDynamicFile == null ) {
+			System.clearProperty(DnsServer.PROP_DYNAMIC);
+		} else {
+			System.setProperty(DnsServer.PROP_DYNAMIC, savedDynamicFile);
+		}
+		if( dynamicDir != null ) {
+			for(File f : dynamicDir.listFiles()) {
+				f.delete();
+			}
+			dynamicDir.delete();
 		}
 	}
 

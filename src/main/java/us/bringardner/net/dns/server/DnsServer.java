@@ -1121,6 +1121,11 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		File ret = dynamicFilePath();
 		log(PROP_DYNAMIC+"= "+ret);
 		File dir = ret.getAbsoluteFile().getParentFile();
+		if( dir != null && !dir.isDirectory() ) {
+			//  (createTempFile only said "No such file or directory")
+			throw new IOException("Can't save dynamic entries: the directory of "+ret+" does not exist. "
+					+"A relative "+PROP_DYNAMIC+" is relative to "+PROP_DNS_DIR+" ("+dnsDir+")");
+		}
 		File tmp = File.createTempFile(ret.getName(), ".tmp", dir);
 		try {
 			PrintStream out = new PrintStream(new FileOutputStream(tmp));

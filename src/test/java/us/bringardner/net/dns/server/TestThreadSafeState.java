@@ -61,11 +61,16 @@ public class TestThreadSafeState {
 
 	private static File dir;
 	private static DnsServer server;
+	private static String savedDynamicFile;
 
 	@BeforeAll
 	public static void setup() throws IOException {
 		System.setProperty("JDns.useDataBase","false");
 		dir = Files.createTempDirectory("dyn").toFile();
+		//  Without this the dynamic file went to the working directory (the server
+		//  has no JDns.dnsDir here), leaving a dynamic.txt in the project.
+		savedDynamicFile = System.getProperty(DnsServer.PROP_DYNAMIC);
+		System.setProperty(DnsServer.PROP_DYNAMIC, new File(dir,"dynamic.txt").getAbsolutePath());
 		File zone = new File(dir,"dyn.test.txt");
 		try(FileWriter w = new FileWriter(zone)) {
 			w.write("@\tIN\tSOA\tns1.dyn.test. postmaster.dyn.test. (\n"
@@ -81,6 +86,11 @@ public class TestThreadSafeState {
 
 	@AfterAll
 	public static void cleanup() {
+		if( savedDynamicFile == null ) {
+			System.clearProperty(DnsServer.PROP_DYNAMIC);
+		} else {
+			System.setProperty(DnsServer.PROP_DYNAMIC, savedDynamicFile);
+		}
 		for(File f : dir.listFiles()) {
 			f.delete();
 		}
