@@ -242,7 +242,8 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 				}
 				rejected.incrementAndGet();
 				if( DnsServer.isDebug() ) {
-					log("TCP connection from "+sock.getInetAddress()+" rejected, "+getActiveConnections()+" connections open");
+					final InetAddress from = sock.getInetAddress();
+					log(() -> "TCP connection from "+from+" rejected, "+getActiveConnections()+" connections open");
 				}
 				try {
 					sock.close();
@@ -296,7 +297,7 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 				sock.setTcpNoDelay(true);
 				InputStream in = sock.getInputStream();
 				if( DnsServer.isDebug() ) {
-					log("New TCP Connection from "+client);
+					log(() -> "New TCP Connection from "+client);
 				}
 
 				// Client may send multiple requests
@@ -325,7 +326,7 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 						// Malformed message: answer FORMERR and drop the connection
 						// (framing can't be trusted after a bad message).
 						if( DnsServer.isDebug() ) {
-							log("Malformed TCP message from "+client+" "+ex.getMessage());
+							log(() -> "Malformed TCP message from "+client+" "+ex.getMessage());
 						}
 						sendFormatError(data);
 						done = true;
@@ -335,7 +336,7 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 					}
 				}
 			} catch(StackOverflowError ex) {
-				log("StackOverflowError processing TCP message from "+client);
+				log(() -> "StackOverflowError processing TCP message from "+client);
 			} catch(Exception ex) {
 				log("Unexpected exception in TCP connection from "+client,ex);
 				if( buf != null && UDPProsessor.dumpBuf != null ) {

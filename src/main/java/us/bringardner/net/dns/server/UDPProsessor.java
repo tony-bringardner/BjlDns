@@ -201,12 +201,12 @@ public void run ()
 				// Malformed packet (e.g. compression loop). Answer FORMERR and keep going.
 				setState("Running format error");
 				if( DnsServer.isDebug() ) {
-					log("Malformed UDP packet from "+client+":"+port+" "+ex.getMessage());
+					log(() -> "Malformed UDP packet from "+client+":"+port+" "+ex.getMessage());
 				}
 				sendFormatError(recPckt.getData(), recPckt.getLength());
 			} catch(StackOverflowError ex) {
 				// Never let a single packet kill this worker thread
-				log("StackOverflowError processing UDP packet from "+client+":"+port);
+				log(() -> "StackOverflowError processing UDP packet from "+client+":"+port);
 				setState("Running StackOverflowError");
 			} catch(Exception ex) {
 				log("Unexpected exception in UDPPRocessor.run",ex);
@@ -282,7 +282,7 @@ public void sendResponse(Message msg)
 			setState("SendResponse after sock.send");
 		
 			if( DnsServer.isDebug() ) {
-				log("Reply Sent ("+msg.getFirstQuestion()+") time="+(System.currentTimeMillis()-timer));
+				log(() -> "Reply Sent ("+msg.getFirstQuestion()+") time="+(System.currentTimeMillis()-timer));
 			}
 		
 			if( dumpBuf != null ) {

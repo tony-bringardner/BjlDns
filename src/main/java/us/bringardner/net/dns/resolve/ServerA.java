@@ -122,7 +122,7 @@ public class ServerA  extends DnsBaseClass
 				}
 			}
 		} catch(Exception ex) {
-			log("Could not look up name server "+n+": "+ex);
+			log(() -> "Could not look up name server "+n+": "+ex);
 		} finally {
 			busy.remove(key);
 		}

@@ -1011,19 +1011,19 @@ TC              TrunCation - specifies that this message was truncated
 		}
 
 		if( rejected > 0 ) {
-			logDebug("Ignored "+rejected+" unexpected/mismatched UDP packet(s) while querying "+server+":"+port+" for "+getFirstQuestion());
+			final int ignored = rejected;
+			logDebug(() -> "Ignored "+ignored+" unexpected/mismatched UDP packet(s) while querying "+server+":"+port+" for "+getFirstQuestion());
 		}
 
 		if( ret == null ) {
 			throw new InterruptedIOException("Received Time Out "+retry+" times");
 		}
-		if( isDebugEnabled() ) {
-			logDebug("msg = "+ret);
-		}
+		final Message reply = ret;
+		logDebug(() -> "msg = "+reply);
 		if( ret.isTruncated() && tcpFallback ) {
 			//  The answer didn't fit in UDP; get the whole thing over TCP
 			//  (RFC 1035 4.2.1) instead of using / caching a partial answer.
-			logDebug("Truncated UDP answer from "+server+" for "+getFirstQuestion()+", retrying over TCP");
+			logDebug(() -> "Truncated UDP answer from "+server+" for "+getFirstQuestion()+", retrying over TCP");
 			return queryTCP(server);
 		}
 		return ret;
