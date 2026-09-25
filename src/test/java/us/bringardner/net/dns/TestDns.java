@@ -93,8 +93,6 @@ public class TestDns implements DNS {
 
 	Map<String,String> expected = new HashMap<String, String>();
 	private static DnsServer server;
-	// etra long timeout for testing
-	private static int serverTimeout = 5000*10000;
 
 	private static String localServerAddress;
 
@@ -114,17 +112,12 @@ public class TestDns implements DNS {
 
 		server = new DnsServer();
 		server.setRecursionAvailable(false);
-		// Start server as stand alone
-		server.start(true);
+		server.start();
+		//  Throws (failing this class only) if the server can't start.
+		server.awaitStarted(60_000);
 
 
-		long start = System.currentTimeMillis();
-		while(!server.isRunning() && System.currentTimeMillis()-start < serverTimeout) {
-			Thread.sleep(100);
-		}
-
-
-		Assertions.assertTrue(server.isRunning(),"DNS Server did not start within timoue = "+serverTimeout );
+		Assertions.assertTrue(server.isRunning(),"DNS Server is not running");
 		localServrPort = DNS.DNSPORT;
 		localServerAddress = null;
 
@@ -143,7 +136,10 @@ public class TestDns implements DNS {
 	@AfterAll
 	public static void tearDown() throws Exception {
 		if( server != null ) {
-			server.stop();
+			//  stop() leaves the JVM wide shutdown flag set, which stopped the
+			//  UDP/TCP processors of tests that ran after this one.
+			server.stopAndWait(10_000);
+			DnsServer.setShutdown(false);
 		}
 	}
 

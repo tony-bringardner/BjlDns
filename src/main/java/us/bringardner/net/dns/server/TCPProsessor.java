@@ -209,8 +209,8 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 				// accept() timed out: check for shutdown
 				continue;
 			} catch(Exception ex) {
-				if( !DnsServer.isShutdown() ) {
-					//  (the socket is closed on shutdown; that is not an error)
+				if( !DnsServer.isShutdown() && !(ss != null && ss.isClosed()) ) {
+					//  (the socket is closed on shutdown or after a failed start; that is not an error)
 					log("Exception in TCP sock.accept()",ex);
 				}
 				if( ss == null || ss.isClosed() ) {
