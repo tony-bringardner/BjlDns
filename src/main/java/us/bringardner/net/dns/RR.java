@@ -158,7 +158,7 @@ public  class RR extends Section
 
 		default:
 			ret = new RR(sec);
-			ret.logDebug("Un Supported type="+type +(type < DNS.TYPENAMES.length ? " ("+DNS.TYPENAMES[type]+")" : ""));
+			ret.logDebug(() -> "Un Supported type="+type +(type < DNS.TYPENAMES.length ? " ("+DNS.TYPENAMES[type]+")" : ""));
 		}
 		return ret;
 	}

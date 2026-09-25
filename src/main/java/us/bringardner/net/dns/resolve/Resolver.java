@@ -279,7 +279,7 @@ public class Resolver  extends DnsBaseClass
 
 		if( time > 5000 ) {
 			Resolver logger = new Resolver();
-			logger.logDebug("Long search time="+time+" que="+question);
+			logger.logDebug(() -> "Long search time="+time+" que="+question);
 		}	
 	}
 

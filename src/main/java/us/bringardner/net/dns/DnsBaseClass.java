@@ -59,6 +59,15 @@ public void log(String msg) {
 	logDebug(msg);
 }
 
+/**
+ * Debug log entry whose text is only built when debug logging is enabled.
+ * Use it where the message is built per packet / query:
+ * log(() -> "Reply Sent ("+q+")");
+ */
+public void log(java.util.function.Supplier<String> msg) {
+	logDebug(msg);
+}
+
 public void log(String msg, Throwable e1) {
 	logError(msg,e1);
 }
