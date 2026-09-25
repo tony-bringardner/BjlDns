@@ -174,8 +174,12 @@ Add this SOA resource record to the byte buffer as described in RFC 1035.
 public void toByteArray(ByteBuffer in) 
 {
 		super.toByteArray(in);
-		in.setName(rname);
+		//  MNAME then RNAME (RFC 1035 3.3.13). They used to be written the other
+		//  way round, so every SOA read from the wire and passed on (e.g. from
+		//  an upstream server) had them swapped; the zone file reader swapped
+		//  them too, which hid the problem for our own zones.
 		in.setName(mname);
+		in.setName(rname);
 		in.setInt(serial);
 		in.setInt(refreash);
 		in.setInt(retry);

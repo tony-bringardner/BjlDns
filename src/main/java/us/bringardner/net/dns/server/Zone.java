@@ -33,6 +33,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import us.bringardner.net.dns.A;
+import us.bringardner.net.dns.AAAA;
+import us.bringardner.net.dns.Caa;
 import us.bringardner.net.dns.Cname;
 import us.bringardner.net.dns.DNS;
 import us.bringardner.net.dns.Hinfo;
@@ -44,6 +46,7 @@ import us.bringardner.net.dns.Ptr;
 import us.bringardner.net.dns.RR;
 import us.bringardner.net.dns.Soa;
 import us.bringardner.net.dns.Spf;
+import us.bringardner.net.dns.Srv;
 import us.bringardner.net.dns.Txt;
 import us.bringardner.net.dns.Utility;
 /**
@@ -195,6 +198,38 @@ public class Zone implements DNS {
 			rr = txt;
 			txt.setText((String)list.get(3));
 			break;
+
+		case AAAA:	rr = new AAAA(rrName,dnsClass);
+		((AAAA)rr).setAddress((String)list.get(3));
+		break;
+
+		case SRV: {
+			//  _service._proto.name TTL IN SRV priority weight port target
+			if( list.size() < 7 ) {
+				throw new IllegalArgumentException("SRV needs priority weight port target");
+			}
+			Srv srv = new Srv(rrName,dnsClass);
+			srv.setPriority(Integer.parseInt((String)list.get(3)));
+			srv.setWeight(Integer.parseInt((String)list.get(4)));
+			srv.setPort(Integer.parseInt((String)list.get(5)));
+			String target = (String)list.get(6);
+			srv.setTarget(target.equals(".") ? "" : fixName(target));
+			rr = srv;
+			break;
+		}
+
+		case CAA: {
+			//  name TTL IN CAA flags tag "value"
+			if( list.size() < 6 ) {
+				throw new IllegalArgumentException("CAA needs flags tag value");
+			}
+			Caa caa = new Caa(rrName,dnsClass);
+			caa.setFlags(Integer.parseInt((String)list.get(3)));
+			caa.setTag((String)list.get(4));
+			caa.setValue((String)list.get(5));
+			rr = caa;
+			break;
+		}
 
 		case SPF: Spf spf = new Spf(rrName,dnsClass);
 		rr = spf;
@@ -689,8 +724,9 @@ public class Zone implements DNS {
 						tmpSoa = new Soa(name,sh);
 						tmpSoa.setTTL(us.bringardner.net.dns.Utility.toSeconds((String)list.get(1)));
 
-						tmpSoa.setMname((String)list.get(5));
-						tmpSoa.setRname((String)list.get(4));
+						//  SOA MNAME (primary name server) RNAME (responsible mailbox)
+						tmpSoa.setMname((String)list.get(4));
+						tmpSoa.setRname((String)list.get(5));
 						tmpSoa.setSerial(us.bringardner.net.dns.Utility.toSeconds((String)list.get(6)));
 						tmpSoa.setRefreash(us.bringardner.net.dns.Utility.toSeconds((String)list.get(7)));
 						tmpSoa.setRetry(us.bringardner.net.dns.Utility.toSeconds((String)list.get(8)));

@@ -423,45 +423,38 @@ public class TestDns implements DNS {
 	}
 	
 	@Test
-	public void testAAAA() {
-
-
-
-		// formatting for ip6 is kind of tricky
+	public void testAAAA() throws Exception {
+		//  Random addresses (with zero groups) in the full form and in Java's
+		//  form: the address bytes must match, the text must be the RFC 5952
+		//  form (the old test expected a single zero group to be shown as
+		//  "::", which RFC 5952 4.2.2 does not allow) and parse back the same.
+		Random r = new Random();
 		for(int cnt=0; cnt<9999; cnt++) {
-			Random r = new Random();
 			StringBuilder buf = new StringBuilder();
 			for(int colon=0; colon<8; colon++) {
 				if( colon  > 0 ) {
 					buf.append(':');	
 				}
-
-				int val = r.nextInt(Short.MAX_VALUE);
-				if( val % 6==0) {
+				int val = r.nextInt(0x10000);
+				if( val % 3 == 0) {
 					val = 0;
 				}
-				if( val >0 ) {
-					buf.append(Integer.toHexString(val));
-				}
-
+				buf.append(Integer.toHexString(val));
 			}
 			String ip = buf.toString();
-			boolean valid = ip.indexOf("::") == ip.lastIndexOf("::") && !ip.endsWith(":");
+			byte [] expect = java.net.InetAddress.getByName(ip).getAddress();
 
 			AAAA a = new AAAA("test");
-			try {
-				a.setAddress(ip);
-				String str = a.getAddressString();
-				Assertions.assertEquals(ip, str,"Address did not convet correctly");
-			} catch (Throwable e) {
-				if( valid ) {
-					throw e;
-				}
-			}
+			a.setAddress(ip);
+			Assertions.assertArrayEquals(expect, a.getAddress(), ip);
+			String str = a.getAddressString();
+			Assertions.assertTrue(str.indexOf("::") == str.lastIndexOf("::"), str);
+			Assertions.assertFalse(str.matches(".*(^|:)0[0-9a-f].*"), "no leading zeros: "+str);
 
-
+			AAAA b = new AAAA("test");
+			b.setAddress(str);
+			Assertions.assertArrayEquals(expect, b.getAddress(), ip+" -> "+str);
 		}
-
 	}
 
 

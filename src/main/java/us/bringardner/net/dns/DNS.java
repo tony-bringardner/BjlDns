@@ -106,9 +106,9 @@ public interface DNS {
 								"RP","AFSDB","X25","ISDN","RT","NSAP","NSAP-PTR","SIG","KEY", "PX", 
 								"GPOS","AAAA","LOC","NXT","EID","NIMLOC","SRV","ATMA","NAPTR",
 								"KX","CERT","A6","DNAME",
-								"SINK","OPT","APL","43","44","45","46","47","48","49",
-								"50","51","52","53","54","55","56","57","58","59",
-								"60","61","62","63","64","65","66","67","68","69",
+								"SINK","OPT","APL","DS","SSHFP","45","RRSIG","NSEC","DNSKEY","49",
+								"NSEC3","NSEC3PARAM","TLSA","53","54","55","56","57","58","59",
+								"60","61","62","63","SVCB","HTTPS","66","67","68","69",
 								"70","71","72","73","74","75","76","77","78","79",
 								"80","81","82","83","84","85","86","87","88","89",
 								"90","91","92","93","94","95","96","97","98","SPF",
@@ -127,7 +127,7 @@ public interface DNS {
 								"220","221","222","223","224","225","226","227","228","229",
 								"230","231","232","233","234","235","236","237","238","239",
 								"240","241","242","243","244","245","246","247","248","TKEY",
-								"TSIG","IXFR","AXFR","MAILB","MAILA","*","256","257","258","259",
+								"TSIG","IXFR","AXFR","MAILB","MAILA","*","256","CAA","258","259",
 								"260","261","262","263","264","265","266","267","268","269"
 								
 								};
@@ -287,6 +287,7 @@ public interface DNS {
 		static final int RP    = 17; // Responsible Person		
 		static final int RT    = 21; // Route Through		//EastLake
 		static final int SINK	=40;		// RFC2782		
+		static final int CAA   = 257; // Certification Authority Authorization (RFC 8659)
 		static final int SRV   = 33; //  Server Selection??		//RFC2930
 		static final int TKEY	=249; // Transaction KEy		// RFC2845
 		static final int TSIG	=250; // Transation Signature		

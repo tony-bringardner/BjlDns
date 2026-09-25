@@ -25,8 +25,6 @@
  */
 package us.bringardner.net.dns;
 
-import java.util.ArrayList;
-import java.util.List;
 
 /*
 	Copyright Tony Bringardner 1999, 2000
@@ -89,35 +87,63 @@ public class AAAA extends RR {
 	}
 
 	/**
-		Get the host four byte array containing the address of this host
+		Get the 16 byte address
 	 **/
 	public byte []  getAddress() { 
 		return super.getRdata();
 	}
 
 	/**
-		Get the String representation of the host four byte array containing the address of this host (in dot notation as in 201:2db7::fa00:0040:6669)
+	 * The address in the canonical text form of RFC 5952: lower case, leading
+	 * zeros dropped, the longest run of two or more zero groups shown as "::".
+	 * (The old formatter left out zero groups and produced forms such as
+	 * "2001:db8:::::1".)
 	 **/
 	public String getAddressString() {
-		int sz2 = rdata.length/2;
-		
-		StringBuilder buf  = new StringBuilder();
-		
-		for (int idx = 0; idx < sz2; idx++) {
-			if( idx > 0 ) {
-				buf.append(":");
-			}
-			int ridx=idx*2;
-			int i = Utility.makeShort(rdata[ridx], rdata[ridx+1]);
-			if( i > 0) {
-				buf.append(Integer.toHexString(i));
+		byte [] r = rdata;
+		if( r == null || r.length != 16 ) {
+			return "";
+		}
+		int [] g = new int[8];
+		for(int i=0; i < 8; i++ ) {
+			g[i] = ((r[i*2]&0xff) << 8) | (r[i*2+1]&0xff);
+		}
+		//  IPv4-mapped (::ffff:a.b.c.d)
+		if( g[0]==0 && g[1]==0 && g[2]==0 && g[3]==0 && g[4]==0 && g[5]==0xffff ) {
+			return "::ffff:"+(r[12]&0xff)+"."+(r[13]&0xff)+"."+(r[14]&0xff)+"."+(r[15]&0xff);
+		}
+		int bestStart = -1, bestLen = 0;
+		for(int i=0; i < 8; ) {
+			if( g[i] == 0 ) {
+				int j = i;
+				while( j < 8 && g[j] == 0 ) {
+					j++;
+				}
+				if( j-i > bestLen ) {
+					bestStart = i;
+					bestLen = j-i;
+				}
+				i = j;
+			} else {
+				i++;
 			}
 		}
-		String ret = buf.toString();
-		while(ret.indexOf(":::") >=0) {
-			ret = ret.replaceFirst(":::", "::");
+		if( bestLen < 2 ) {
+			bestStart = -1;
 		}
-		return ret;
+		StringBuilder buf = new StringBuilder();
+		for(int i=0; i < 8; i++ ) {
+			if( i == bestStart ) {
+				buf.append("::");
+				i += bestLen-1;
+				continue;
+			}
+			if( buf.length() > 0 && buf.charAt(buf.length()-1) != ':' ) {
+				buf.append(':');
+			}
+			buf.append(Integer.toHexString(g[i]));
+		}
+		return buf.toString();
 	}
 
 	/**
@@ -127,125 +153,36 @@ public class AAAA extends RR {
 		return getAddressString();
 	}
 
-
-
 	/**
-	 * Just count how many : are in a string
-	 * @param str
-	 * @return
-	 */
-	private int count(String str) {
-		int ret = 0;
-		byte [] data = str.getBytes();
-		for (int idx = 0; idx < data.length; idx++) {
-			if( data[idx] == (byte)':') {
-				ret++;
-			}
-		}
-		if( !str.endsWith(":") ) {
-			ret++;
-		}
-		return ret;
-	}
-	
-	/**
-	 * Expand an ip6 address by filling in empty or missing fields (x:x:x:x:x becomes :::x:x:x:x:x)
-	 * @param ip6Address
-	 * @return
-	 */
-	private String expand(String ip6Address) {
-		String ret = ip6Address;
-		int idx1 = ip6Address.indexOf("::");		
-		if(idx1>=0) {
-			List<String> ll  = split(ip6Address);
-			if( ll.size()==8) {
-				return ip6Address;
-			}
-			String l = ip6Address.substring(0, idx1);
-			String r = ip6Address.substring(idx1+2);
-			int lc = count(l);
-			int rc = count(r);
-			while(rc+lc <= 8) {
-				r = ":"+r;
-				rc = count(r);
-			}
-			ret = l+r;
-			List<String> list = split(ret);
-			if( list.size()>8) {
-				while(list.size()>8) {
-					if( ret.endsWith(":")) {
-						ret = ret.substring(0,ret.length()-1);
-						list = split(ret);
-					} else if( ret.startsWith(":") ) {
-						ret = ret.substring(1);
-						list = split(ret);
-					} else {
-						throw new RuntimeException("can't resolve Invalid IP6 address expantion str="+ip6Address+" ret="+ret);
-					}					
-				}				
-			} else {
-				throw new RuntimeException("Invalid IP6 address expantion str="+ip6Address+" ret="+ret+" size="+list.size());
-			}
-		}
-		
-		return ret;
-	}
-	
-	/**
-	 * String.split does ignores cases where there are baack-to-back separators
-	 * @param ip
-	 * @return
-	 */
-	private List<String> split(String ip) {
-		List<String> ret = new ArrayList<>();
-		char c = ':';
-		
-		int idx = ip.indexOf(c);
-		while(idx >=0) {
-			String left = ip.substring(0, idx);
-			ret.add(left.trim());
-			ip = ip.substring(idx+1);
-			idx = ip.indexOf(c);
-		}
-		ret.add(ip);
-		return ret;
-	}
-	
-	/**
-	IPv6 addresses are significantly longer than IPv4 variants (eight 16-bit blocks with groups of four symbols, often called hextets or quartets) 
-	and are alphanumeric. Also, whereas IPv4 relies on periods for formatting, IPv6 uses colons, such as in this example:
-
-				2001:0db8:0000:0001:0000:ff00:0032:7879
-
-	The model omits leading zeros (like in IPv4), and you'll sometimes find IP addresses that have a double colon (::) that designate any number of 0 bits 
-	(such as 1201:2db7::fa00:0040:6669, in which the third, fourth, and fifth hextets are 0000). 
-
+	 * Set the address from its text form: any valid IPv6 form, e.g. 2001:db8::1,
+	 * ::1, 2001:0db8:0:0:0:0:0:1 or ::ffff:192.0.2.1. (The old parser rejected
+	 * common forms such as 2001:db8::1.)
+	 * 
+	 * @throws IllegalArgumentException if it is not an IPv6 address
 	 */
 	public void setAddress(String a) {
-		a = a.trim();
-		if( a.endsWith(":")) {
-			throw new RuntimeException("invalid address (cannot end with : )");
+		if( a == null ) {
+			throw new IllegalArgumentException("Invalid IPv6 address: null");
 		}
-		int i1x = a.indexOf("::");
-		int i2x = a.lastIndexOf("::");
-		if( i1x != i2x ) {
-			throw new RuntimeException("invalid address (multiple :: at "+i1x +" and "+i2x+")");
+		String addr = a.trim();
+		//  Only characters of an IPv6 literal, so InetAddress never does a name lookup
+		if( addr.indexOf(':') < 0 || !addr.matches("[0-9A-Fa-f:.]+") ) {
+			throw new IllegalArgumentException("Invalid IPv6 address: '"+a+"'");
 		}
-		
-		String address = expand(a);
-		byte [] tmp =  new byte[16];
-		List<String> parts = split(address);
-		for (int idx = 0,sz=parts.size(); idx < sz; idx++) {			
-			String str = parts.get(idx);
-			if( str != null && !((str=str.trim()).isEmpty())) {
-				int i1 = Integer.parseInt(str,16);					
-				Utility.setShort(tmp, idx*2, i1);
-				int i2 = Utility.makeShort(tmp[(idx*2)+0], tmp[(idx*2)+1]);
-				//TODO:  Remove the when testing is complete
-				if( i2 != i1 ) {
-					throw new RuntimeException("did not convert value back it int correctly i1="+i1+" i2="+i2);
-				}
-			}
+		byte [] tmp;
+		try {
+			java.net.InetAddress ia = java.net.InetAddress.getByName(addr);
+			tmp = ia.getAddress();
+		} catch (java.net.UnknownHostException e) {
+			throw new IllegalArgumentException("Invalid IPv6 address: '"+a+"'");
+		}
+		if( tmp.length == 4 ) {
+			//  Java turns ::ffff:a.b.c.d into an Inet4Address
+			byte [] mapped = new byte[16];
+			mapped[10] = (byte)0xff;
+			mapped[11] = (byte)0xff;
+			System.arraycopy(tmp, 0, mapped, 12, 4);
+			tmp = mapped;
 		}
 		setRdata(tmp);
 	}
@@ -253,17 +190,20 @@ public class AAAA extends RR {
 	public void setFromRdata() {
 		return;
 	}
+
 	/**
 	*		Add this resource record to the byte buffer as described in RFC 1035.
 	 **/
 	public void toByteArray(ByteBuffer in) {
-		rdata = new byte[16];
+		byte [] r = rdata;
+		if( r == null || r.length != 16 ) {
+			throw new IllegalStateException("AAAA "+getName()+" has no 16 byte address");
+		}
+		//  (This used to set rdata to 16 zero bytes first, so every AAAA
+		//  answer that was passed on went out as "::".)
 		rdlength=16;
 		super.toByteArray(in);
-		for (int idx = 0; idx < rdata.length; idx++) {
-			in.setByte(rdata[idx]);	
-		}
-
+		in.setBytes(r);
 	}
 
 	/**

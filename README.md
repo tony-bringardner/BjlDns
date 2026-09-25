@@ -11,6 +11,9 @@ The intent of this DNS code is to support a large number of domains with very li
  +  Supports a common configuration that will be used for any domain that does not have a unique configuration.
  +  Domains may be in a database or file system
  +  Support Dynamic DNS (DDNS) with trivial configuration
+ +  Zone file record types: SOA, NS, A, AAAA, CNAME, PTR, MX, TXT, SPF, HINFO, SRV, CAA (other types are passed through unchanged when resolving)
+
+Not supported: zone transfers (AXFR/IXFR get REFUSED), RFC 2136 UPDATE and NOTIFY (NOTIMP; dynamic records are managed through the admin port), DNSSEC, and the `$ORIGIN` / `$INCLUDE` zone file directives.
    
  
 Dependencies:  

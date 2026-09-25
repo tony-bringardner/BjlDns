@@ -1370,6 +1370,18 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			retMsg.setHeader(hdr);
 			retMsg.setResponseCodeRefused();
 			ret.add(retMsg);
+		} else if( hdr.getOPCODE() != DNS.QUERY ) {
+			//  NOTIFY, UPDATE, IQUERY, STATUS...: NOTIMP (RFC 1035 4.1.1,
+			//  RFC 2136 2.2). They used to be answered as ordinary queries, so
+			//  e.g. nsupdate was told NOERROR and assumed its update was made.
+			Message  retMsg = new Message();
+			retMsg.setHeader(hdr);
+			retMsg.setMessageTypeResponse();
+			for(Section s : reqMsg.getQuestion()) {
+				retMsg.setQuestion(s);
+			}
+			retMsg.setResponseCodeNotImplemented();
+			ret.add(retMsg);
 		} else {
 			List<Section> v = reqMsg.getQuestion();
 			for(Section s : v) {
@@ -1383,6 +1395,13 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				retMsg.setResponseCodeNoError();
 				retMsg.setMessageTypeResponse();
 				retMsg.setQuestion(s);
+				if( s.getType() == DNS.AXFR || s.getType() == DNS.IXFR ) {
+					//  Zone transfers are not supported: say so (REFUSED, as
+					//  RFC 5936 4.2 suggests) instead of an empty NOERROR answer.
+					retMsg.setResponseCodeRefused();
+					ret.add(retMsg);
+					continue;
+				}
 				retMsg = step2(req,retMsg);
 				if( retMsg != null && req.getCnameTarget() != null ) {
 					retMsg = completeOutOfZoneCname(req, retMsg);
@@ -1773,9 +1792,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				//String postMaster = soa.getMname();
 				//  must be common
 				((Soa)realrr).setName(target);
-				((Soa)realrr).setMname("postmaster."+target);
+				((Soa)realrr).setRname("postmaster."+target);
 			}
-			String dnsServer = soa.getRname();
+			//  (MNAME and RNAME used to be swapped in Soa; see Soa.toByteArray)
+			String dnsServer = soa.getMname();
 			realrr = zone.getMatchingRR(dnsServer,DNS.A);
 			if( realrr != null ) {
 				ret.addAdditional(realrr);

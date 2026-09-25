@@ -151,6 +151,8 @@ public  class RR extends Section
 		case RP    : ret = new Rp(sec);break;
 		case AFSDB    : ret = new Afsdb(sec);break;
 		case AAAA:	ret = new AAAA(sec);break;
+		case SRV:	ret = new Srv(sec);break;
+		case CAA:	ret = new Caa(sec);break;
 
 		//  This is to prevent the log file from filling with unsupported errors
 		case OPT	: ret = new RR(sec);break;
