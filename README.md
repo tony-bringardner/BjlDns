@@ -14,7 +14,7 @@ The intent of this DNS code is to support a large number of domains with very li
  +  Zone file record types: SOA, NS, A, AAAA, CNAME, PTR, MX, TXT, SPF, HINFO, SRV, CAA, HTTPS, SVCB, DS (other types are passed through unchanged when resolving)
  +  DNSSEC: zones are signed by the server itself when it has keys for them (see below)
 
-Not supported: incremental zone transfer (IXFR is answered with the whole zone), acting as a secondary (incoming NOTIFY gets NOTIMP), NSEC3, validating answers from other servers when resolving, and the `$GENERATE` zone file directive.
+Not supported: incremental zone transfer (IXFR is answered with the whole zone), acting as a secondary (incoming NOTIFY gets NOTIMP), NSEC3 opt-out, validating answers from other servers when resolving, and the `$GENERATE` zone file directive.
 
 # Zone files
 
@@ -45,6 +45,7 @@ A zone is signed when the key directory (`JDns.dnssecKeyDir`, by default the zon
 What the server does:
  +  Adds the DNSKEY set and an NSEC chain, and signs every RRset: the DNSKEY set with the key signing keys (flags 257), the rest with the zone signing keys (256), or everything with one key if there is only one kind. At a delegation only the DS set and the NSEC are signed; glue is not.
  +  Answers queries with the DO bit with the RRSIGs, and proves what doesn't exist with NSEC records (NXDOMAIN, NODATA, wildcards, delegations without a DS). Queries without the DO bit get the same answers as before.
+ +  NSEC3 (RFC 5155) instead of NSEC for the zones in `JDns.dnssecNsec3` (`*` for all): the chain holds hashes of the names, so it can't be walked to list the zone. The defaults follow RFC 9276 (0 extra iterations, no salt, no opt-out); `JDns.dnssecNsec3Iterations` (at most 100) and `JDns.dnssecNsec3Salt` change them. Switching a zone between NSEC and NSEC3 re-signs it.
  +  DS records go in the parent zone file at the delegation, e.g. `child IN DS 12345 13 2 <digest>`. A DS query is answered from the parent, even when the server serves the child too.
  +  Signatures are valid for `JDns.dnssecValidity` (14 days) from an hour ago. When a quarter is left the zone is signed again with the next serial (written to the journal, so it survives a restart) and the secondaries get a NOTIFY. Zone transfers include the signatures.
  +  Key rollover: every key file of a zone is used. A `.key` file without its `.private` file is published in the DNSKEY set but doesn't sign. BIND's timing fields in the `.private` file (`Publish`, `Activate`, `Inactive`, `Delete`, set with `dnssec-settime`) are followed. Adding, removing or changing a key file re-signs the zone.
@@ -53,7 +54,7 @@ What the server does:
 In a signed zone:
  +  Wildcards follow RFC 4592, as validators expect: `*.example.com` also matches `a.b.example.com`, but never a name that exists or has names below it.
  +  An SOA query for a name other than the apex gets NODATA (the made-up SOA the default zone gives other names can't be signed).
- +  DNSKEY, RRSIG and NSEC records can't be put in the zone file or added with UPDATE (DS can).
+ +  DNSKEY, RRSIG, NSEC, NSEC3 and NSEC3PARAM records can't be put in the zone file or added with UPDATE (DS can).
  +  Names outside the zone itself (the `*.*.` patterns a default zone uses for other domains) are served unsigned.
    
  
@@ -130,6 +131,9 @@ A bind address of `localhost` means this host's own name (its network address), 
 | `JDns.updateAllow` | none | Addresses / networks allowed to send unsigned UPDATE requests. Prefer `JDns.updateKeys` |
 | `JDns.notifyKey` | none | TSIG key to sign NOTIFY messages with; the secondary's answer must then be signed too |
 | `JDns.dnssecKeyDir` | `JDns.zone.dir` | Directory of the DNSSEC key files (`K<zone>.+<alg>+<tag>.key` and `.private`). A zone with keys there is signed |
+| `JDns.dnssecNsec3` | none | Zones to sign with NSEC3 instead of NSEC, e.g. `example.com, example.org`, or `*` for all |
+| `JDns.dnssecNsec3Iterations` | 0 | NSEC3 extra hash iterations (0-100; RFC 9276 recommends 0) |
+| `JDns.dnssecNsec3Salt` | - | NSEC3 salt in hex, `-` for none (RFC 9276 recommends none) |
 | `JDns.dnssecValidity` | 14d | How long DNSSEC signatures are valid (at least 1h); zones are signed again when a quarter of it is left |
 | `JDns.notifyRetries` | 5 | Attempts per NOTIFY |
 | `JDns.notifyTimeout` | 2000 | First wait (ms) for a NOTIFY answer, doubled after each attempt |

@@ -29,21 +29,31 @@ import java.util.Map;
 import java.util.NavigableMap;
 
 import us.bringardner.net.dns.Nsec;
+import us.bringardner.net.dns.Nsec3;
 import us.bringardner.net.dns.Rrsig;
 import us.bringardner.net.dns.dnssec.Canonical;
+import us.bringardner.net.dns.dnssec.Nsec3Params;
 
 /**
  * The DNSSEC data of a signed zone (made by {@link ZoneSigner}): the RRSIGs
- * of every RRset and the NSEC chain, plus what is needed to know when the
- * zone must be signed again. Never changed after it is made.
+ * of every RRset and the NSEC or NSEC3 chain, plus what is needed to know
+ * when the zone must be signed again. Never changed after it is made.
  */
 public final class SignedZone {
 
 	final Zone unsigned;
 	final String apex;
 	private final Map<String, List<Rrsig>> sigs;
-	//  sort key (Canonical.sortKey) -> NSEC, so lookups compare plain strings
+	//  The names that own records (sort keys, Canonical.sortKey, so lookups
+	//  compare plain strings)
+	private final java.util.NavigableSet<String> names;
+	//  NSEC: sort key -> NSEC (empty with NSEC3)
 	private final NavigableMap<String, Nsec> chain;
+	//  NSEC3: hash label -> NSEC3 (null with NSEC)
+	private final NavigableMap<String, Nsec3> hashed;
+	private final Nsec3Params nsec3;
+	/** "NSEC" or "NSEC3 " + parameters. */
+	final String mode;
 	/** When it was signed and when the first signature expires (seconds since 1970). */
 	final long signedAt;
 	final long expires;
@@ -55,16 +65,30 @@ public final class SignedZone {
 	final String dynamicFingerprint;
 	final int rrsigCount;
 
-	SignedZone(Zone unsigned, String apex, Map<String, List<Rrsig>> sigs, NavigableMap<String, Nsec> chain,
+	/**
+	 * @param names the names that own records
+	 * @param chain the NSEC records by name (NSEC), or empty
+	 * @param hashed the NSEC3 records by hash label, or null (NSEC)
+	 */
+	SignedZone(Zone unsigned, String apex, Map<String, List<Rrsig>> sigs, java.util.Collection<String> names,
+			Map<String, Nsec> chain, NavigableMap<String, Nsec3> hashed, Nsec3Params nsec3,
 			long signedAt, long expires, long refreshAt, String keyId, String dynamicFingerprint, int rrsigCount) {
 		this.unsigned = unsigned;
 		this.apex = apex;
 		this.sigs = sigs;
+		java.util.TreeSet<String> keys = new java.util.TreeSet<String>();
+		for(String n : names) {
+			keys.add(Canonical.sortKey(n));
+		}
+		this.names = keys;
 		java.util.TreeMap<String, Nsec> byKey = new java.util.TreeMap<String, Nsec>();
 		for(Map.Entry<String, Nsec> e : chain.entrySet()) {
 			byKey.put(Canonical.sortKey(e.getKey()), e.getValue());
 		}
 		this.chain = byKey;
+		this.hashed = hashed;
+		this.nsec3 = nsec3;
+		this.mode = nsec3 == null ? "NSEC" : "NSEC3 "+nsec3;
 		this.signedAt = signedAt;
 		this.expires = expires;
 		this.refreshAt = refreshAt;
@@ -101,9 +125,41 @@ public final class SignedZone {
 		return chain.get(Canonical.sortKey(name));
 	}
 
-	/** @return true if the name owns records (has an NSEC) */
+	/** @return true if the name owns records */
 	public boolean exists(String name) {
-		return chain.containsKey(Canonical.sortKey(name));
+		return names.contains(Canonical.sortKey(name));
+	}
+
+	/** Is the zone signed with NSEC3 (else NSEC)? */
+	public boolean isNsec3() {
+		return nsec3 != null;
+	}
+
+	/** The NSEC3 parameters, or null with NSEC. */
+	public Nsec3Params getNsec3Params() {
+		return nsec3;
+	}
+
+	/** The NSEC3 records (for a zone transfer); empty with NSEC. */
+	public java.util.Collection<Nsec3> allNsec3() {
+		return hashed == null ? Collections.<Nsec3>emptyList() : Collections.unmodifiableCollection(hashed.values());
+	}
+
+	/** The NSEC3 whose owner is the hash of this name (it exists, or is an empty non-terminal), or null. */
+	public Nsec3 nsec3Matching(String name) {
+		return hashed == null ? null : hashed.get(nsec3.hashLabel(name));
+	}
+
+	/** The NSEC3 covering the hash of a name that does not exist. */
+	public Nsec3 nsec3Covering(String name) {
+		if( hashed == null ) {
+			return null;
+		}
+		Map.Entry<String, Nsec3> e = hashed.lowerEntry(nsec3.hashLabel(name));
+		if( e == null ) {
+			e = hashed.lastEntry();
+		}
+		return e.getValue();
 	}
 
 	/**
@@ -128,11 +184,11 @@ public final class SignedZone {
 	}
 
 	private boolean isEnt(String key) {
-		if( chain.containsKey(key) ) {
+		if( names.contains(key) ) {
 			return false;
 		}
 		//  The next name in order is below this one
-		String next = chain.higherKey(key);
+		String next = names.higher(key);
 		return next != null && next.startsWith(key);
 	}
 
@@ -153,14 +209,14 @@ public final class SignedZone {
 				return apex;
 			}
 			String k = Canonical.sortKey(n);
-			if( n.equals(apex) || chain.containsKey(k) || isEnt(k) ) {
+			if( n.equals(apex) || names.contains(k) || isEnt(k) ) {
 				return n;
 			}
 		}
 	}
 
-	/** Number of names in the NSEC chain. */
+	/** Number of names that own records. */
 	public int size() {
-		return chain.size();
+		return names.size();
 	}
 }

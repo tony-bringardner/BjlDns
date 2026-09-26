@@ -126,6 +126,31 @@ public class Nsec extends RR {
 		return out.toByteArray();
 	}
 
+	/** Read type bit maps (RFC 4034 4.1.2) from pos to the end of r. */
+	public static TreeSet<Integer> parseBitmaps(byte [] r, int pos) {
+		TreeSet<Integer> t = new TreeSet<Integer>();
+		while( pos < r.length ) {
+			if( pos+2 > r.length ) {
+				throw new DnsFormatException("Invalid NSEC type bit map");
+			}
+			int window = r[pos++]&0xff;
+			int len = r[pos++]&0xff;
+			if( len < 1 || len > 32 || pos+len > r.length ) {
+				throw new DnsFormatException("Invalid NSEC type bit map");
+			}
+			for(int i=0; i < len; i++ ) {
+				int b = r[pos+i]&0xff;
+				for(int bit=0; bit < 8; bit++ ) {
+					if( (b & (0x80 >> bit)) != 0 ) {
+						t.add(window*256 + i*8 + bit);
+					}
+				}
+			}
+			pos += len;
+		}
+		return t;
+	}
+
 	@Override
 	public void setFromRdata() {
 		byte [] r = rdata;
@@ -152,26 +177,7 @@ public class Nsec extends RR {
 			n.append(new String(r, pos, len, java.nio.charset.StandardCharsets.ISO_8859_1));
 			pos += len;
 		}
-		TreeSet<Integer> t = new TreeSet<Integer>();
-		while( pos < r.length ) {
-			if( pos+2 > r.length ) {
-				throw new DnsFormatException("Invalid NSEC type bit map");
-			}
-			int window = r[pos++]&0xff;
-			int len = r[pos++]&0xff;
-			if( len < 1 || len > 32 || pos+len > r.length ) {
-				throw new DnsFormatException("Invalid NSEC type bit map");
-			}
-			for(int i=0; i < len; i++ ) {
-				int b = r[pos+i]&0xff;
-				for(int bit=0; bit < 8; bit++ ) {
-					if( (b & (0x80 >> bit)) != 0 ) {
-						t.add(window*256 + i*8 + bit);
-					}
-				}
-			}
-			pos += len;
-		}
+		TreeSet<Integer> t = parseBitmaps(r, pos);
 		next = n.toString();
 		types = t;
 		dirty = false;

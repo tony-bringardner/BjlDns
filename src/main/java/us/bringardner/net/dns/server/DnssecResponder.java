@@ -127,7 +127,10 @@ final class DnssecResponder {
 		if( !answered && soa != null ) {
 			Zone z = zoneOf(name, qtype, zoneFor);
 			SignedZone sz = z == null ? null : z.getSigned();
-			if( sz != null && Canonical.key(soa.getName()).equals(sz.apex) && Canonical.isBelow(name, sz.apex, true) ) {
+			if( sz != null && Canonical.key(soa.getName()).equals(sz.apex) && Canonical.isBelow(name, sz.apex, true)
+					&& sz.isNsec3() ) {
+				nsec3Denial(sz, name, msg.getResponseCode() == DNS.NAME_ERROR, done, authorityAdds);
+			} else if( sz != null && Canonical.key(soa.getName()).equals(sz.apex) && Canonical.isBelow(name, sz.apex, true) ) {
 				if( msg.getResponseCode() == DNS.NAME_ERROR ) {
 					addNsec(sz, sz.covering(name), done, authorityAdds);
 					addNsec(sz, sz.covering("*."+sz.closestEncloser(name)), done, authorityAdds);
@@ -160,6 +163,9 @@ final class DnssecResponder {
 							authorityAdds.add(s.copy());
 						}
 					}
+				} else if( sz.isNsec3() ) {
+					//  RFC 5155 7.2.7: the NSEC3 of the delegation, without the DS bit
+					addNsec(sz, sz.nsec3Matching(cut), done, authorityAdds);
 				} else {
 					addNsec(sz, sz.nsecAt(cut), done, authorityAdds);
 				}
@@ -170,16 +176,49 @@ final class DnssecResponder {
 		}
 	}
 
-	private static void addNsec(SignedZone sz, Nsec nsec, Set<String> done, List<RR> out) {
+	/**
+	 * NSEC3 proofs (RFC 5155 7.2): NODATA for a name that exists (or is an
+	 * empty non-terminal) is its matching NSEC3; NXDOMAIN and wildcard
+	 * NODATA need the closest encloser proof (the NSEC3 matching the closest
+	 * encloser and the one covering the next closer name) plus the NSEC3
+	 * covering (NXDOMAIN) or matching (NODATA) the wildcard.
+	 */
+	private static void nsec3Denial(SignedZone sz, String name, boolean nxdomain, Set<String> done, List<RR> out) {
+		if( !nxdomain && (sz.exists(name) || sz.isEmptyNonTerminal(name)) ) {
+			addNsec(sz, sz.nsec3Matching(name), done, out);
+			return;
+		}
+		String ce = sz.closestEncloser(name);
+		addNsec(sz, sz.nsec3Matching(ce), done, out);
+		addNsec(sz, sz.nsec3Covering(nextCloser(name, ce)), done, out);
+		String wild = "*."+ce;
+		addNsec(sz, nxdomain ? sz.nsec3Covering(wild) : sz.nsec3Matching(wild), done, out);
+	}
+
+	/** The name one label longer than the closest encloser, on the way to name. */
+	static String nextCloser(String name, String ce) {
+		String n = Canonical.key(name);
+		String c = Canonical.key(ce);
+		while( true ) {
+			int dot = n.indexOf('.');
+			String parent = dot < 0 ? "" : n.substring(dot+1);
+			if( parent.equals(c) || dot < 0 ) {
+				return n;
+			}
+			n = parent;
+		}
+	}
+
+	private static void addNsec(SignedZone sz, RR nsec, Set<String> done, List<RR> out) {
 		if( nsec == null ) {
 			return;
 		}
 		String owner = Canonical.key(nsec.getName());
-		if( !done.add(owner+"|"+DNS.NSEC) ) {
+		if( !done.add(owner+"|"+nsec.getType()) ) {
 			return;
 		}
 		out.add(nsec.copy());
-		List<Rrsig> sigs = sz.getSigs(owner, DNS.NSEC);
+		List<Rrsig> sigs = sz.getSigs(owner, nsec.getType());
 		if( sigs != null ) {
 			for(Rrsig s : sigs) {
 				out.add(s.copy());
@@ -208,7 +247,7 @@ final class DnssecResponder {
 			if( sz == null || !Canonical.isBelow(owner, sz.apex, true) ) {
 				continue;
 			}
-			if( type == DNS.NSEC && done.contains(e.getKey()) ) {
+			if( (type == DNS.NSEC || type == DNS.NSEC3) && done.contains(e.getKey()) ) {
 				continue;
 			}
 			int ttl = Integer.MAX_VALUE;
@@ -234,7 +273,12 @@ final class DnssecResponder {
 			}
 			if( wildcard ) {
 				//  Proof that no closer name exists
-				addNsec(sz, sz.covering(owner), done, authorityAdds);
+				if( sz.isNsec3() ) {
+					//  RFC 5155 7.2.6: the NSEC3 covering the next closer name
+					addNsec(sz, sz.nsec3Covering(nextCloser(owner, sz.closestEncloser(owner))), done, authorityAdds);
+				} else {
+					addNsec(sz, sz.covering(owner), done, authorityAdds);
+				}
 			}
 		}
 		section.addAll(adds);

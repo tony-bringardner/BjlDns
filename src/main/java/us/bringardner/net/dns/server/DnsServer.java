@@ -169,6 +169,12 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	public static final String PROP_DNSSEC_KEY_DIR = "JDns.dnssecKeyDir";
 	/** How long DNSSEC signatures are valid, e.g. 14d (the default); zones are signed again when a quarter of it is left. */
 	public static final String PROP_DNSSEC_VALIDITY = "JDns.dnssecValidity";
+	/** Zones to sign with NSEC3 instead of NSEC: a list of zone names, or * for all. Default: none. */
+	public static final String PROP_DNSSEC_NSEC3 = "JDns.dnssecNsec3";
+	/** NSEC3 extra hash iterations (default 0, as RFC 9276 recommends; at most 100). */
+	public static final String PROP_DNSSEC_NSEC3_ITERATIONS = "JDns.dnssecNsec3Iterations";
+	/** NSEC3 salt in hex, or - for none (the default, as RFC 9276 recommends). */
+	public static final String PROP_DNSSEC_NSEC3_SALT = "JDns.dnssecNsec3Salt";
 
 	public static final String STATUS_ACTIVE = "active";
 	public static final String STATUS_DELETED = "deleted";
@@ -946,6 +952,9 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			if( validity != null ) {
 				setDnssecValidity(Utility.toSeconds(validity));
 			}
+			setDnssecNsec3(stringProperty(PROP_DNSSEC_NSEC3),
+					us.bringardner.net.dns.dnssec.Nsec3Params.parse(intProperty(PROP_DNSSEC_NSEC3_ITERATIONS, 0),
+							stringProperty(PROP_DNSSEC_NSEC3_SALT)));
 			setNotifyTargets(stringProperty(PROP_NOTIFY),
 					intProperty(PROP_NOTIFY_RETRIES, ZoneNotifier.DEFAULT_RETRIES),
 					intProperty(PROP_NOTIFY_TIMEOUT, ZoneNotifier.DEFAULT_TIMEOUT));
@@ -2412,6 +2421,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			for(List<us.bringardner.net.dns.Rrsig> sigs : sz.allSigs().values()) {
 				records.addAll(sigs);
 			}
+			records.addAll(sz.allNsec3());
 			//  In canonical name order, each name's records together (as other
 			//  servers send a signed zone; some tools expect it)
 			RR first = records.get(0);
@@ -2790,6 +2800,38 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		return dnssecValidity;
 	}
 
+	//  NSEC3: the zones (lower case) or "*", and the parameters
+	private volatile java.util.Set<String> nsec3Zones = Collections.emptySet();
+	private volatile us.bringardner.net.dns.dnssec.Nsec3Params nsec3Params = us.bringardner.net.dns.dnssec.Nsec3Params.DEFAULT;
+
+	/**
+	 * Sign these zones with NSEC3 (RFC 5155) instead of NSEC.
+	 * 
+	 * @param zones zone names separated by commas or spaces, "*" for every
+	 *        zone, null or empty for none
+	 */
+	public void setDnssecNsec3(String zones, us.bringardner.net.dns.dnssec.Nsec3Params params) {
+		java.util.Set<String> set = new java.util.HashSet<String>();
+		if( zones != null ) {
+			for(String z : zones.split("[,\\s]+")) {
+				if( !z.trim().isEmpty() ) {
+					set.add(z.trim().equals("*") ? "*" : Canonical.key(z.trim()));
+				}
+			}
+		}
+		if( params.getIterations() > 0 || params.getSalt().length > 0 ) {
+			log("NSEC3 with "+params.getIterations()+" iterations and a salt: RFC 9276 recommends 0 iterations and no salt");
+		}
+		nsec3Params = params;
+		nsec3Zones = Collections.unmodifiableSet(set);
+	}
+
+	/** The NSEC3 parameters for a zone, or null to use NSEC. */
+	us.bringardner.net.dns.dnssec.Nsec3Params nsec3For(String zone) {
+		java.util.Set<String> z = nsec3Zones;
+		return z.contains("*") || z.contains(Canonical.key(zone)) ? nsec3Params : null;
+	}
+
 	/** The keys found for each zone (lower case name, no trailing dot). */
 	public Map<String, List<DnssecKey>> getDnssecKeys() {
 		return dnssecKeys;
@@ -2884,19 +2926,21 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		long now = System.currentTimeMillis()/1000;
 		Map<String, List<? extends RR>> dyn = dynamicIn(unsigned, zones);
 		String fp = fingerprint(dyn);
+		us.bringardner.net.dns.dnssec.Nsec3Params nsec3 = nsec3For(name);
+		String mode = nsec3 == null ? "NSEC" : "NSEC3 "+nsec3;
 		if( !force && cs != null && cs.unsigned == unsigned && cs.keyId.equals(ZoneSigner.keyId(keys, now))
-				&& cs.dynamicFingerprint.equals(fp) ) {
+				&& cs.dynamicFingerprint.equals(fp) && cs.mode.equals(mode) ) {
 			return current;
 		}
 		try {
 			long start = System.currentTimeMillis();
-			ZoneSigner.Result r = ZoneSigner.sign(unsigned, dyn, fp, keys, now, dnssecValidity);
+			ZoneSigner.Result r = ZoneSigner.sign(unsigned, dyn, fp, keys, now, dnssecValidity, nsec3);
 			for(String w : r.warnings) {
 				logError("DNSSEC: "+w);
 			}
 			SignedZone sz = r.zone.getSigned();
 			final long ms = System.currentTimeMillis()-start;
-			log(() -> "DNSSEC: signed "+name+" (serial "+Integer.toUnsignedString(unsigned.getSoa().getSerial())+", "
+			log(() -> "DNSSEC: signed "+name+" with "+sz.mode+" (serial "+Integer.toUnsignedString(unsigned.getSoa().getSerial())+", "
 					+sz.size()+" names, "+sz.rrsigCount+" signatures, "+ms+" ms), valid until "
 					+new Date(sz.expires*1000));
 			return r.zone;
