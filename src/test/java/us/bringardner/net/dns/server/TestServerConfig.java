@@ -78,7 +78,7 @@ public class TestServerConfig {
 		Map<String,String> props = base(dir);
 		props.putAll(extra);
 		Map<String,String> saved = new HashMap<String,String>();
-		String [] alsoClear = {DnsServer.PROP_USE_BATABASE, DnsServer.PROP_JDBC_URL, DnsServer.PROP_UDP_TIMEOUT,
+		String [] alsoClear = {DnsServer.PROP_USE_DATABASE, DnsServer.PROP_JDBC_URL, DnsServer.PROP_UDP_TIMEOUT,
 				DnsServer.PROP_TCP_TIMEOUT, DnsServer.PROP_TIMEOUT, DnsServer.PROP_BIND_ADDRESS,
 				DnsServer.PROP_TCP_BIND_ADDRESS, DnsServer.PROP_ADMIN_BIND_ADDRESS};
 		for(String k : alsoClear) {
@@ -211,9 +211,9 @@ public class TestServerConfig {
 			assertTrue(!s.useDatabase(), "no flag, no JDBC URL: no database");
 			System.setProperty(DnsServer.PROP_JDBC_URL, "jdbc:none://nowhere");
 			assertTrue(s.useDatabase(), "no flag, JDBC URL set: database");
-			System.setProperty(DnsServer.PROP_USE_BATABASE, "false");
+			System.setProperty(DnsServer.PROP_USE_DATABASE, "false");
 			assertTrue(!s.useDatabase(), "explicit false wins");
-			System.setProperty(DnsServer.PROP_USE_BATABASE, "true");
+			System.setProperty(DnsServer.PROP_USE_DATABASE, "true");
 			assertTrue(s.useDatabase());
 		});
 	}
@@ -221,7 +221,7 @@ public class TestServerConfig {
 	@Test
 	public void missingDatabaseIsSqlExceptionNotNpe() throws Exception {
 		withServer(props(), s -> {
-			System.setProperty(DnsServer.PROP_USE_BATABASE, "true");
+			System.setProperty(DnsServer.PROP_USE_DATABASE, "true");
 			// No JDBC URL: used to be a NullPointerException from a null Connection
 			SQLException ex = assertThrows(SQLException.class, () -> s.addOrUpdateDynamic("host.cfg.test","10.0.0.9"));
 			assertTrue(ex.getMessage().contains(DnsServer.PROP_JDBC_URL), ex.getMessage());

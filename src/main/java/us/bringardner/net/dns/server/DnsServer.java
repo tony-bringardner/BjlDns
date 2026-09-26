@@ -86,7 +86,7 @@ import us.bringardner.net.dns.resolve.Resolver;
 public class DnsServer  extends DnsBaseClass implements Runnable
 {
 	public static final String PROP_DEFAULT_ZONE = "JDns.master.zone";
-	public static final String PROP_DNS_PROPERTIRS = "JDns.properties";
+	public static final String PROP_DNS_PROPERTIES = "JDns.properties";
 	private static final String DEFAULT_PROPERTIES_FILE_NAME = "JDns.properties";
 	public static final String PROP_ADMIN_PORT = "JDns.adminPort";
 	public static final String PROP_DEBUG = "JDns.debug";
@@ -168,7 +168,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	public static final String PROP_NOTIFY_RETRIES = "JDns.notifyRetries";
 	/** First wait (ms) for a NOTIFY answer, doubled after each attempt (default 2000). */
 	public static final String PROP_NOTIFY_TIMEOUT = "JDns.notifyTimeout";
-	public static final String PROP_USE_BATABASE = "JDns.useDataBase";
+	public static final String PROP_USE_DATABASE = "JDns.useDataBase";
 	/** Directory of the zones' DNSSEC keys (K&lt;zone&gt;.+alg+tag.key and .private). Default: the zone directory. A zone with keys is signed. */
 	public static final String PROP_DNSSEC_KEY_DIR = "JDns.dnssecKeyDir";
 	/** How long DNSSEC signatures are valid, e.g. 14d (the default); zones are signed again when a quarter of it is left. */
@@ -595,7 +595,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		}
 
 		//First find and load any external property file 
-		String propertyFile = getProperty(PROP_DNS_PROPERTIRS,DEFAULT_PROPERTIES_FILE_NAME);
+		String propertyFile = getProperty(PROP_DNS_PROPERTIES,DEFAULT_PROPERTIES_FILE_NAME);
 
 		//  Look for a file that may change these values.
 		File f = new File(propertyFile).getCanonicalFile();;
@@ -1207,7 +1207,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * and reload, logged errors and hit NullPointerExceptions.)
 	 */
 	boolean useDatabase() {
-		String flag = stringProperty(PROP_USE_BATABASE);
+		String flag = stringProperty(PROP_USE_DATABASE);
 		if( flag != null ) {
 			return flag.toLowerCase().startsWith("t");
 		}

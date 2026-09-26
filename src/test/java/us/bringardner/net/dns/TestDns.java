@@ -108,7 +108,7 @@ public class TestDns implements DNS {
 	@BeforeAll
 	public static void setUp() throws Exception {
 
-		System.setProperty(DnsServer.PROP_DNS_PROPERTIRS, "TestFiles/TestDns.properties");
+		System.setProperty(DnsServer.PROP_DNS_PROPERTIES, "TestFiles/TestDns.properties");
 		System.setProperty("LogLevel","ERROR");
 		System.setProperty("JDns.useDataBase","false");
 		//  The server rewrites the dynamic file on every admin change, so work on a

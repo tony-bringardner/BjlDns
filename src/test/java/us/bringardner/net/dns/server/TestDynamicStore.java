@@ -144,7 +144,7 @@ public class TestDynamicStore {
 	private static File zoneFile;
 	private static File dynFile;
 	private static final Map<String,String> saved = new HashMap<String,String>();
-	private static final String [] PROPS = {DnsServer.PROP_USE_BATABASE, DnsServer.PROP_JDBC_URL, DnsServer.PROP_DYNAMIC, DnsServer.PROP_JDBC_CLASS};
+	private static final String [] PROPS = {DnsServer.PROP_USE_DATABASE, DnsServer.PROP_JDBC_URL, DnsServer.PROP_DYNAMIC, DnsServer.PROP_JDBC_CLASS};
 
 	@BeforeAll
 	public static void setup() throws Exception {
@@ -186,10 +186,10 @@ public class TestDynamicStore {
 		failNext = false;
 		dynFile.delete();
 		if( database ) {
-			System.setProperty(DnsServer.PROP_USE_BATABASE, "true");
+			System.setProperty(DnsServer.PROP_USE_DATABASE, "true");
 			System.setProperty(DnsServer.PROP_JDBC_URL, "jdbc:fakedns:test");
 		} else {
-			System.setProperty(DnsServer.PROP_USE_BATABASE, "false");
+			System.setProperty(DnsServer.PROP_USE_DATABASE, "false");
 			System.clearProperty(DnsServer.PROP_JDBC_URL);
 		}
 		DnsServer s = new DnsServer();
