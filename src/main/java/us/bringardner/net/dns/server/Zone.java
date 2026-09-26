@@ -30,6 +30,7 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import us.bringardner.net.dns.A;
@@ -248,10 +249,9 @@ public class Zone implements DNS {
 		default : throw new IllegalArgumentException("Invalid or unsupported type "+type+" from '"+(String)list.get(2));
 		}
 
+		//  A TTL given in the file is used as is (it used to be raised to the
+		//  SOA's TTL); records without one get $TTL or the SOA's TTL.
 		int ttl = Utility.toSeconds((String)list.get(1));
-		if( ttl < soa.getTTL() ) {
-			ttl = soa.getTTL();
-		}
 
 		rr.setTTL(ttl);
 
@@ -294,15 +294,19 @@ public class Zone implements DNS {
 	/**
 	 * Convert to an absolute name if required
 	 **/
+	/**
+	 * An absolute name, without the trailing dot: '@' is the origin, a name
+	 * without a trailing dot is relative to the origin ($ORIGIN, or the zone).
+	 */
 	private String fixName(String nm){
 		String ret = nm;
 		if( ret.equals("@") ) {
-			ret = currentName;
-		}else if( ret != null && !ret.endsWith(".") ) {
-			ret = ret+"."+soa.getName();
+			ret = origin != null ? origin : currentName;
+		} else if( ret.endsWith(".") ) {
+			ret = stripDot(ret);
+		} else {
+			ret = ret+"."+(origin != null ? origin : stripDot(soa.getName()));
 		}
-
-
 		return ret;
 	}
 
@@ -615,149 +619,348 @@ public class Zone implements DNS {
 	}
 
 
+	//  ---- Parser state (only used while a zone file is read)
+
+	/** Most nested $INCLUDE levels. */
+	static final int MAX_INCLUDE_DEPTH = 10;
+
+	//  Origin for relative names and '@' ($ORIGIN), without the trailing dot
+	private transient String origin;
+	//  Whether the file set the origin with $ORIGIN (otherwise the SOA owner becomes the origin)
+	private transient boolean originSet;
+	//  $TTL: TTL for records that don't give one (-1: not set)
+	private transient int defaultTtl = -1;
+	//  Owner of the previous record, absolute (for lines that start with white space)
+	private transient String lastOwner;
+	//  Files on the current $INCLUDE chain (to reject loops)
+	private transient java.util.Set<File> includeStack;
+
+	//  Files read with $INCLUDE, so a change to one of them reloads the zone
+	private List<File> includedFiles = new ArrayList<File>();
+
 	/**
-	 * Read a zone
-	 **/
-
-	private String readLine(BufferedReader in) throws IOException {
-		String tmp = "";
-		StringBuffer ret = new StringBuffer();
-		boolean done = true;
-		int idx = 0;
-
-		// Read past empty lines
-		do {
-			if( (tmp = in.readLine()) == null ) {
-				if( ret.length() == 0 ) {
-					return null;
-				} else {
-					done = true;
-				}
-			} else {
-				//  string quoted strings
-				if(tmp.length() > 0 && tmp.charAt(0) == '#' ) {
-					tmp = "";
-				} else if( (idx = tmp.indexOf(";")) >= 0 ) {
-					int s1 = tmp.indexOf('"');
-					if( s1 <0 ) {
-						tmp = tmp.substring(0,idx);
-					} else {
-						int s2 = tmp.indexOf(s1,'"');
-						if( idx < s2 ) {
-							tmp = tmp.substring(0,idx);
-						}
-					}
-				}
-				if( (idx = tmp.indexOf('(')) >= 0 ) {
-					tmp = tmp.substring(0,idx);
-					done = false;
-				} else if( (idx = tmp.indexOf(')')) >= 0 ) {
-					tmp = tmp.substring(0,idx);
-					done = true;
-				}
-				ret.append(tmp);
-			}
-		} while( !done );
-
-		return ret.toString();
+	 * @return the files this zone read with $INCLUDE (empty if none).
+	 */
+	public List<File> getIncludedFiles() {
+		return Collections.unmodifiableList(includedFiles);
 	}
 
-	/**
-	 * Read a zone
-	 **/
-
-	private void readZoneInfo(BufferedReader in)	throws IOException {
-
-
-		String tmpName = null;
-		String line = null;
-		String tmp = null;
-		List<String> list = null;
-		rrs = new ArrayList<List<RR>>();
-		names = new ArrayList<Name>();
-		//int defTTL = -1;
-
-		int lineNumber=0;
-		try {
-			while( (line=readLine(in)) != null ) {
-				lineNumber++;
-				if( line.length() > 0 ) {
-					//  Parse the line into values, deleting whitespace
-					list = parseLine(tmpName,line);
-					if( list.size() < 2 ) {
-						//  An invalid line
-						continue;
-					}
-					tmp = (String)list.get(1);
-					//  TTL is not specified
-					if( !Character.isDigit(tmp.charAt(0)) ) {
-						list.add(1,"0");
-					}
-
-					tmpName = (String)list.get(0);
-
-					if( tmpName.equals("$TTL") ) {
-						try {
-							//defTTL = Integer.parseInt(tmp);
-						} catch (Exception ex) {}
-						continue;
-					}
-
-
-					if( soa == null ) {
-						//  This must be an tmpSoa
-						Soa tmpSoa = null;
-
-						if( !((String)list.get(3)).equalsIgnoreCase("SOA"))  {
-							throw new IOException("tmpSoa must be the first record in the file");
-						}
-
-						short sh = us.bringardner.net.dns.Utility.classOf((String)list.get(2));
-						if( sh == 0 ) {
-							throw new IOException("Invalid dnsClass in tmpSoa record");
-						}
-
-
-						if(!tmpName.equals("@") ) {
-							setName(tmpName);
-						}
-						tmpSoa = new Soa(name,sh);
-						tmpSoa.setTTL(us.bringardner.net.dns.Utility.toSeconds((String)list.get(1)));
-
-						//  SOA MNAME (primary name server) RNAME (responsible mailbox)
-						tmpSoa.setMname((String)list.get(4));
-						tmpSoa.setRname((String)list.get(5));
-						tmpSoa.setSerial(us.bringardner.net.dns.Utility.toSeconds((String)list.get(6)));
-						tmpSoa.setRefreash(us.bringardner.net.dns.Utility.toSeconds((String)list.get(7)));
-						tmpSoa.setRetry(us.bringardner.net.dns.Utility.toSeconds((String)list.get(8)));
-						tmpSoa.setExpire(us.bringardner.net.dns.Utility.toSeconds((String)list.get(9)));
-						tmpSoa.setMinimum(us.bringardner.net.dns.Utility.toSeconds((String)list.get(10)));
-
-						if( tmpSoa.getTTL() < tmpSoa.getMinimum() ) {
-							tmpSoa.setTTL(tmpSoa.getMinimum()) ;
-						}
-
-						setSoa(tmpSoa);
-						currentName = getName();
-					} else {
-						addRR(list);
-					}
-
-
-				}
-			}
-		} catch(Throwable e) {
-			throw new IOException("Error near line "+lineNumber,e);
+	/** One logical line of a zone file (several physical lines when parentheses are used). */
+	private static class ZoneLine {
+		final String text;
+		final int lineNumber;
+		ZoneLine(String text, int lineNumber) {
+			this.text = text;
+			this.lineNumber = lineNumber;
 		}
-		setWildCards(true);
-		populateNs();
-		buildIndex();
+	}
+
+	/** Reads logical lines and counts physical ones (for error messages). */
+	private static class LineSource {
+		final BufferedReader in;
+		int physical;
+		LineSource(BufferedReader in) {
+			this.in = in;
+		}
+	}
+
+	/**
+	 * Read the next logical line: comments (';' outside quotes, or '#' at the
+	 * start of a line) are removed, and lines inside parentheses are joined.
+	 * Text after '(' on the same line is kept (it used to be dropped, so e.g.
+	 * a one-line SOA lost its numbers), and a ';' inside a quoted string is
+	 * not a comment.
+	 * 
+	 * @return null at the end of the file
+	 */
+	private static ZoneLine readLine(LineSource src) throws IOException {
+		StringBuilder ret = new StringBuilder();
+		int depth = 0;
+		int first = -1;
+		String tmp;
+		while( (tmp = src.in.readLine()) != null ) {
+			src.physical++;
+			if( first < 0 ) {
+				first = src.physical;
+			}
+			if( tmp.length() > 0 && tmp.charAt(0) == '#' ) {
+				tmp = "";
+			}
+			boolean quoted = false;
+			for(int i=0; i < tmp.length(); i++ ) {
+				char c = tmp.charAt(i);
+				if( c == '\\' && quoted && i+1 < tmp.length() ) {
+					ret.append(c).append(tmp.charAt(++i));
+					continue;
+				}
+				if( c == '"' ) {
+					quoted = !quoted;
+				} else if( !quoted ) {
+					if( c == ';' ) {
+						break;
+					} else if( c == '(' ) {
+						depth++;
+						c = ' ';
+					} else if( c == ')' ) {
+						if( depth == 0 ) {
+							throw new IOException("')' without '(' at line "+src.physical);
+						}
+						depth--;
+						c = ' ';
+					}
+				}
+				ret.append(c);
+			}
+			if( depth == 0 ) {
+				if( ret.toString().trim().isEmpty() ) {
+					//  Nothing on this line, keep going
+					ret.setLength(0);
+					first = -1;
+					continue;
+				}
+				return new ZoneLine(ret.toString(), first);
+			}
+			ret.append(' ');
+		}
+		if( depth != 0 ) {
+			throw new IOException("'(' at line "+first+" is not closed");
+		}
+		return ret.toString().trim().isEmpty() ? null : new ZoneLine(ret.toString(), first);
+	}
+
+	/** @return true for a TTL such as 3600, 1h, 1h30m or 2W */
+	private static boolean isTtl(String t) {
+		return t.matches("[0-9]+([sSmMhHdDwW]([0-9]+[sSmMhHdDwW])*)?");
+	}
+
+	/**
+	 * Put the fields of a record line in a fixed order:
+	 * owner, TTL (null if not given), class (null if not given), type, rdata...
+	 * RFC 1035 allows TTL and class in either order; the class used to be
+	 * taken for a missing TTL when it came first.
+	 */
+	private static List<String> normalize(List<String> list) {
+		List<String> ret = new ArrayList<String>();
+		ret.add(list.get(0));
+		String ttl = null;
+		String cls = null;
+		int i = 1;
+		for(int n=0; n < 2 && i < list.size(); n++ ) {
+			String t = list.get(i);
+			if( ttl == null && isTtl(t) ) {
+				ttl = t;
+				i++;
+			} else if( cls == null && Utility.classOf(t) > 0 ) {
+				cls = t;
+				i++;
+			}
+		}
+		ret.add(ttl);
+		ret.add(cls);
+		ret.addAll(list.subList(i, list.size()));
+		return ret;
+	}
+
+	/** Resolve a (possibly relative) name against the origin; the result keeps a trailing dot only if it had one. */
+	private String absolute(String nm) {
+		if( nm.equals("@") ) {
+			return origin+".";
+		}
+		if( nm.endsWith(".") ) {
+			return nm;
+		}
+		return nm+"."+origin+".";
+	}
+
+	/**
+	 * Read a zone file (and, through $INCLUDE, the files it names).
+	 */
+	private void readZoneFile(File file, int depth) throws IOException {
+		File canonical = file.getCanonicalFile();
+		if( !includeStack.add(canonical) ) {
+			throw new IOException("$INCLUDE loop: "+file+" includes itself");
+		}
+		try(BufferedReader in = new BufferedReader(new FileReader(file))) {
+			LineSource src = new LineSource(in);
+			ZoneLine zl;
+			while( true ) {
+				int lineNumber = src.physical+1;
+				try {
+					if( (zl = readLine(src)) == null ) {
+						break;
+					}
+					lineNumber = zl.lineNumber;
+					processLine(file, zl.text, depth);
+				} catch(ZoneFileException e) {
+					throw e;
+				} catch(Throwable e) {
+					throw new ZoneFileException(file, lineNumber, e);
+				}
+			}
+		} finally {
+			includeStack.remove(canonical);
+		}
+	}
+
+	/** An error in a zone file: which file, which line, and why. */
+	static class ZoneFileException extends IOException {
+		private static final long serialVersionUID = 1L;
+		ZoneFileException(File file, int line, Throwable cause) {
+			super("Error in "+file.getName()+" at line "+line+": "+cause.getMessage(), cause);
+		}
+	}
+
+	private void processLine(File file, String line, int depth) throws IOException {
+		List<String> list = parseLine(lastOwner, line);
+		if( list.isEmpty() ) {
+			return;
+		}
+		String first = list.get(0);
+		if( first.startsWith("$") ) {
+			directive(file, list, depth);
+			return;
+		}
+		if( list.size() < 2 ) {
+			throw new IllegalArgumentException("Incomplete record: '"+line.trim()+"'");
+		}
+		list = normalize(list);
+		if( list.size() < 4 ) {
+			throw new IllegalArgumentException("Incomplete record: '"+line.trim()+"'");
+		}
+
+		String owner = list.get(0);
+		String ttl = list.get(1);
+		if( soa == null ) {
+			if( !list.get(3).equalsIgnoreCase("SOA") ) {
+				throw new IOException("The SOA must be the first record in the zone");
+			}
+			readSoa(list);
+		} else {
+			if( list.get(3).equalsIgnoreCase("SOA") ) {
+				throw new IllegalArgumentException("SOA records can only be at the start of a zone");
+			}
+			if( ttl == null ) {
+				ttl = String.valueOf(defaultTtl >= 0 ? defaultTtl : soa.getTTL());
+			}
+			list.set(1, ttl);
+			if( list.get(2) == null ) {
+				list.remove(2);
+			}
+			addRR(list);
+		}
+		lastOwner = absolute(owner);
+	}
+
+	private void readSoa(List<String> list) throws IOException {
+		if( list.size() < 11 ) {
+			throw new IOException("SOA needs MNAME RNAME SERIAL REFRESH RETRY EXPIRE MINIMUM");
+		}
+		String cls = list.get(2) == null ? "IN" : list.get(2);
+		short sh = Utility.classOf(cls);
+		if( sh == 0 ) {
+			throw new IOException("Invalid dnsClass in SOA record");
+		}
+		String owner = list.get(0);
+		if( owner.equals("@") ) {
+			if( originSet ) {
+				setName(origin);
+			}
+		} else {
+			//  An explicit owner names the zone (as before); relative to $ORIGIN if one was given
+			setName(stripDot(originSet && !owner.endsWith(".") ? owner+"."+origin : owner));
+		}
+		Soa tmpSoa = new Soa(name,sh);
+		//  SOA MNAME (primary name server) RNAME (responsible mailbox), relative to the origin
+		if( !originSet ) {
+			origin = stripDot(name);
+		}
+		tmpSoa.setMname(fixName(list.get(4)));
+		tmpSoa.setRname(fixName(list.get(5)));
+		//  The serial is an unsigned 32 bit number, not a time
+		tmpSoa.setSerial((int)Long.parseLong(list.get(6)));
+		tmpSoa.setRefreash(Utility.toSeconds(list.get(7)));
+		tmpSoa.setRetry(Utility.toSeconds(list.get(8)));
+		tmpSoa.setExpire(Utility.toSeconds(list.get(9)));
+		tmpSoa.setMinimum(Utility.toSeconds(list.get(10)));
+		String ttl = list.get(1);
+		if( ttl != null ) {
+			tmpSoa.setTTL(Utility.toSeconds(ttl));
+		} else if( defaultTtl >= 0 ) {
+			tmpSoa.setTTL(defaultTtl);
+		} else {
+			//  (the default before $TTL was supported)
+			tmpSoa.setTTL(tmpSoa.getMinimum());
+		}
+		setSoa(tmpSoa);
+		currentName = getName();
+		if( !originSet ) {
+			origin = stripDot(getName());
+		}
+	}
+
+	private static String stripDot(String n) {
+		return n.endsWith(".") ? n.substring(0, n.length()-1) : n;
+	}
+
+	/** $ORIGIN, $TTL and $INCLUDE (RFC 1035 5.1, RFC 2308 4). */
+	private void directive(File file, List<String> list, int depth) throws IOException {
+		String d = list.get(0).toUpperCase(java.util.Locale.ROOT);
+		switch(d) {
+		case "$TTL":
+			if( list.size() != 2 || !isTtl(list.get(1)) ) {
+				throw new IllegalArgumentException("$TTL needs one TTL value");
+			}
+			defaultTtl = Utility.toSeconds(list.get(1));
+			break;
+		case "$ORIGIN":
+			if( list.size() != 2 ) {
+				throw new IllegalArgumentException("$ORIGIN needs one domain name");
+			}
+			origin = stripDot(absolute(list.get(1)));
+			originSet = true;
+			break;
+		case "$INCLUDE": {
+			if( list.size() < 2 || list.size() > 3 ) {
+				throw new IllegalArgumentException("$INCLUDE needs a file name and an optional origin");
+			}
+			if( depth >= MAX_INCLUDE_DEPTH ) {
+				throw new IOException("$INCLUDE nested more than "+MAX_INCLUDE_DEPTH+" levels");
+			}
+			File inc = new File(list.get(1));
+			if( !inc.isAbsolute() ) {
+				//  Relative to the file that includes it
+				File dir = file.getAbsoluteFile().getParentFile();
+				inc = new File(dir, list.get(1));
+			}
+			if( !inc.isFile() ) {
+				throw new IOException("$INCLUDE file not found: "+inc);
+			}
+			//  The origin (and owner) of this file are restored afterwards
+			String savedOrigin = origin;
+			boolean savedOriginSet = originSet;
+			String savedOwner = lastOwner;
+			if( list.size() == 3 ) {
+				origin = stripDot(absolute(list.get(2)));
+				originSet = true;
+			}
+			includedFiles.add(inc.getAbsoluteFile());
+			try {
+				readZoneFile(inc, depth+1);
+			} finally {
+				origin = savedOrigin;
+				originSet = savedOriginSet;
+				lastOwner = savedOwner;
+			}
+			break;
+		}
+		default:
+			throw new IllegalArgumentException("Unsupported directive "+list.get(0));
+		}
 	}
 
 	/**
 	 * Read a zone
 	 **/
-
 	private void readZoneInfo() throws IOException {
 		lastModified = masterFile.lastModified();
 		fileName = masterFile.getName();
@@ -773,13 +976,25 @@ public class Zone implements DNS {
 			name = name.substring(idx+1);
 		}
 
-		BufferedReader in = new BufferedReader(new FileReader(masterFile));
+		rrs = new ArrayList<List<RR>>();
+		names = new ArrayList<Name>();
+		includedFiles = new ArrayList<File>();
+		origin = stripDot(name);
+		originSet = false;
+		defaultTtl = -1;
+		lastOwner = "@";
+		includeStack = new java.util.HashSet<File>();
 		try {
-			readZoneInfo(in);
+			readZoneFile(masterFile, 0);
+			if( soa == null ) {
+				throw new IOException("No SOA record in "+masterFile.getName());
+			}
 		} finally {
-			in.close();	
+			includeStack = null;
 		}
-
+		setWildCards(true);
+		populateNs();
+		buildIndex();
 	}
 
 	/**

@@ -13,7 +13,18 @@ The intent of this DNS code is to support a large number of domains with very li
  +  Support Dynamic DNS (DDNS) with trivial configuration
  +  Zone file record types: SOA, NS, A, AAAA, CNAME, PTR, MX, TXT, SPF, HINFO, SRV, CAA (other types are passed through unchanged when resolving)
 
-Not supported: zone transfers (AXFR/IXFR get REFUSED), RFC 2136 UPDATE and NOTIFY (NOTIMP; dynamic records are managed through the admin port), DNSSEC, and the `$ORIGIN` / `$INCLUDE` zone file directives.
+Not supported: zone transfers (AXFR/IXFR get REFUSED), RFC 2136 UPDATE and NOTIFY (NOTIMP; dynamic records are managed through the admin port), DNSSEC, and the `$GENERATE` zone file directive.
+
+# Zone files
+
+Each `<zone>.txt` file in `JDns.zone.dir` is one zone, in the RFC 1035 master file format:
+
+ +  `$ORIGIN name` sets the origin for relative names and `@` (a relative `$ORIGIN` is relative to the current one). Before the SOA it also names the zone; otherwise the zone is named after the file.
+ +  `$TTL ttl` (RFC 2308) is the TTL for the records after it that don't give one. Without `$TTL`, such records get the SOA's TTL, and an SOA without a TTL gets its MINIMUM. A TTL written on a record is used as is.
+ +  `$INCLUDE file [origin]` reads another file at that point; a relative path is relative to the including file, and the origin is restored afterwards. Includes can be nested (up to 10 levels; loops are rejected). Name included files something other than `*.txt` (e.g. `hosts.inc`), or they will be loaded as zones of their own. Editing an included file reloads the zone.
+ +  TTLs can use units: `300`, `30m`, `1h30m`, `2d`, `1w`.
+ +  Parentheses can span lines anywhere in a record, and `;` starts a comment except inside quotes.
+ +  A zone file that fails to load is reported with the file name and line number (and the previous version keeps being served).
    
  
 Dependencies:  

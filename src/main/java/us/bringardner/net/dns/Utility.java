@@ -164,57 +164,45 @@ public  class Utility extends DnsBaseClass implements DNS {
 	 **/
 	public static int toSeconds(String val)
 	{
-
+		//  A number of seconds, or units: 30m, 1h, 1h30m, 2w1d (s, m, h, d, w;
+		//  only a single unit used to be understood). 0 if there is no number.
 		if( val == null ) {
 			return 0;
 		}
 		val = val.trim();
-		if( val.length() == 0) {
-			return 0;
-		}
-
-		int i=0;
+		long total = 0;
+		int i = 0;
 		int sz = val.length();
-
-		for(; i< sz; i++ ) {
-			if( Character.isDigit(val.charAt(i)) == false) {
+		boolean any = false;
+		while( i < sz ) {
+			int start = i;
+			while( i < sz && Character.isDigit(val.charAt(i)) ) {
+				i++;
+			}
+			if( i == start ) {
 				break;
 			}
+			long num = Long.parseLong(val.substring(start, i));
+			long unit = 1;
+			if( i < sz ) {
+				switch(val.charAt(i)) {
+				case 's': case 'S': unit = 1; i++; break;
+				case 'm': case 'M': unit = MINUTE; i++; break;
+				case 'h': case 'H': unit = HOUR; i++; break;
+				case 'd': case 'D': unit = DAY; i++; break;
+				case 'w': case 'W': unit = WEEK; i++; break;
+				default:
+					//  Unknown unit: stop (as before, the rest is ignored)
+					sz = i;
+				}
+			}
+			total += num * unit;
+			any = true;
 		}
-		if( i < 1 ) {
+		if( !any ) {
 			return 0;
 		}
-
-		String num = val;
-		String mul = "s";
-
-		if( i != sz) {
-			num = val.substring(0,i);
-			mul = val.substring(i);
-		}
-
-		int unit = 1;
-		if( mul.length() > 0 ) {
-			switch(mul.charAt(0)) {
-			case 's':
-			case 'S':unit = 1;	break;
-			case 'm':
-			case 'M':unit = MINUTE;	break;
-			case 'h':
-			case 'H':unit = HOUR;	break;
-			case 'd':
-			case 'D':unit = DAY;	break;
-			case 'w':
-			case 'W':unit = WEEK;	break;
-
-			}
-		}
-
-		int ret = Integer.parseInt(num);
-		ret = ret * unit;
-
-		return ret;
-
+		return (int)Math.min(Integer.MAX_VALUE, total);
 	}
 	public static int typeOf(String t) 
 	{

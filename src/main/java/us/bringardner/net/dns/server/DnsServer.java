@@ -1198,13 +1198,28 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		return ret;
 	}
 
-	/** Zone file name -> lastModified for the zone files in zoneDir now. */
+	/** Zone file name -> stamp (see zoneStamp) for the zone files in zoneDir now. */
 	private Map<String, Long> currentZoneFiles() {
 		Map<String, Long> ret = new HashMap<String, Long>();
 		File [] list = zoneDir == null ? null : getZoneFiles();
 		if( list != null ) {
+			ZoneSet cur = zoneSet;
 			for(File f : list) {
-				ret.put(f.getName(), f.lastModified());
+				ret.put(f.getName(), zoneStamp(f.lastModified(), cur.byFile.get(f.getName())));
+			}
+		}
+		return ret;
+	}
+
+	/**
+	 * A zone file's timestamp combined with those of the files it reads with
+	 * $INCLUDE, so editing an included file reloads the zone.
+	 */
+	static long zoneStamp(long modified, Zone z) {
+		long ret = modified;
+		if( z != null ) {
+			for(File inc : z.getIncludedFiles()) {
+				ret = ret*31 + inc.lastModified();
 			}
 		}
 		return ret;
@@ -1263,12 +1278,11 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				//  Read the timestamp before the file so an edit made while we
 				//  read it triggers another reload.
 				long modified = file.lastModified();
-				seen.put(fileName, modified);
 
 				Zone prev = old.byFile.get(fileName);
 				Long prevModified = oldSeen == null ? null : oldSeen.get(fileName);
 				Zone z = null;
-				if( prev != null && prevModified != null && prevModified.longValue() == modified ) {
+				if( prev != null && prevModified != null && prevModified.longValue() == zoneStamp(modified, prev) ) {
 					z = prev;
 				} else {
 					try {
@@ -1284,6 +1298,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 					}
 				}
 
+				//  The stamp uses the $INCLUDE files of the version now in use
+				seen.put(fileName, zoneStamp(modified, z != null ? z : prev));
 				if( z != null ) {
 					byFile.put(fileName, z);
 					Zone dup = zones.put(z.getName().toLowerCase(),z);
