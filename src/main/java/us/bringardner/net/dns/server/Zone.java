@@ -39,6 +39,7 @@ import us.bringardner.net.dns.Caa;
 import us.bringardner.net.dns.Cname;
 import us.bringardner.net.dns.DNS;
 import us.bringardner.net.dns.Hinfo;
+import us.bringardner.net.dns.Https;
 import us.bringardner.net.dns.Message;
 import us.bringardner.net.dns.Mx;
 import us.bringardner.net.dns.Name;
@@ -48,6 +49,7 @@ import us.bringardner.net.dns.RR;
 import us.bringardner.net.dns.Soa;
 import us.bringardner.net.dns.Spf;
 import us.bringardner.net.dns.Srv;
+import us.bringardner.net.dns.Svcb;
 import us.bringardner.net.dns.Txt;
 import us.bringardner.net.dns.Utility;
 /**
@@ -216,6 +218,21 @@ public class Zone implements DNS {
 			String target = (String)list.get(6);
 			srv.setTarget(target.equals(".") ? "" : fixName(target));
 			rr = srv;
+			break;
+		}
+
+		case SVCB:
+		case HTTPS: {
+			//  name TTL IN HTTPS priority target [key=value ...] (RFC 9460)
+			if( list.size() < 5 ) {
+				throw new IllegalArgumentException(Utility.TYPENAMES[type]+" needs priority and target");
+			}
+			Svcb svcb = type == HTTPS ? new Https(rrName,dnsClass) : new Svcb(rrName,dnsClass);
+			svcb.setPriority(Integer.parseInt((String)list.get(3)));
+			String target = (String)list.get(4);
+			svcb.setTarget(target.equals(".") ? "" : fixName(target));
+			svcb.setParams(new ArrayList<String>(list.subList(5, list.size())));
+			rr = svcb;
 			break;
 		}
 

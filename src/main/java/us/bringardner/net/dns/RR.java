@@ -153,6 +153,8 @@ public  class RR extends Section
 		case AAAA:	ret = new AAAA(sec);break;
 		case SRV:	ret = new Srv(sec);break;
 		case CAA:	ret = new Caa(sec);break;
+		case SVCB:	ret = new Svcb(sec);break;
+		case HTTPS:	ret = new Https(sec);break;
 
 		//  This is to prevent the log file from filling with unsupported errors
 		case OPT	: ret = new RR(sec);break;

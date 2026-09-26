@@ -287,6 +287,8 @@ public interface DNS {
 		static final int RP    = 17; // Responsible Person		
 		static final int RT    = 21; // Route Through		//EastLake
 		static final int SINK	=40;		// RFC2782		
+		static final int SVCB  = 64;  // Service binding (RFC 9460)
+		static final int HTTPS = 65;  // Service binding for HTTPS (RFC 9460)
 		static final int CAA   = 257; // Certification Authority Authorization (RFC 8659)
 		static final int SRV   = 33; //  Server Selection??		//RFC2930
 		static final int TKEY	=249; // Transaction KEy		// RFC2845
