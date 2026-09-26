@@ -72,6 +72,9 @@ import us.bringardner.net.dns.Section;
 import us.bringardner.net.dns.Soa;
 import us.bringardner.net.dns.Svcb;
 import us.bringardner.net.dns.Tsig;
+import us.bringardner.net.dns.Utility;
+import us.bringardner.net.dns.dnssec.Canonical;
+import us.bringardner.net.dns.dnssec.DnssecKey;
 import us.bringardner.net.dns.resolve.QueryData;
 import us.bringardner.net.dns.resolve.Resolver;
 
@@ -162,6 +165,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	/** First wait (ms) for a NOTIFY answer, doubled after each attempt (default 2000). */
 	public static final String PROP_NOTIFY_TIMEOUT = "JDns.notifyTimeout";
 	public static final String PROP_USE_BATABASE = "JDns.useDataBase";
+	/** Directory of the zones' DNSSEC keys (K&lt;zone&gt;.+alg+tag.key and .private). Default: the zone directory. A zone with keys is signed. */
+	public static final String PROP_DNSSEC_KEY_DIR = "JDns.dnssecKeyDir";
+	/** How long DNSSEC signatures are valid, e.g. 14d (the default); zones are signed again when a quarter of it is left. */
+	public static final String PROP_DNSSEC_VALIDITY = "JDns.dnssecValidity";
 
 	public static final String STATUS_ACTIVE = "active";
 	public static final String STATUS_DELETED = "deleted";
@@ -318,8 +325,12 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 */
 	public synchronized void addZone(Zone zone) {
 		ZoneSet cur = zoneSet;
+		reloadDnssecKeys();
 		Map<String, Zone> zones = new HashMap<String, Zone>(cur.zones);
-		zones.put(zone.getName().toLowerCase(),zone);
+		String key = zone.getName().toLowerCase();
+		zones.put(key,zone);
+		//  Signed if the key directory has keys for it
+		zones.put(key, prepareZone(zone, cur.zones.get(key), true, zones));
 		zoneSet = new ZoneSet(Collections.unmodifiableMap(zones), cur.defaultZone, cur.byFile);
 	}
 
@@ -929,6 +940,12 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			setUpdateAllow(stringProperty(PROP_UPDATE_ALLOW));
 			setAxfrAllow(stringProperty(PROP_AXFR_ALLOW));
 			notifyKeyName = stringProperty(PROP_NOTIFY_KEY);
+			String kd = stringProperty(PROP_DNSSEC_KEY_DIR);
+			setDnssecKeyDir(kd == null ? null : new File(kd));
+			String validity = stringProperty(PROP_DNSSEC_VALIDITY);
+			if( validity != null ) {
+				setDnssecValidity(Utility.toSeconds(validity));
+			}
 			setNotifyTargets(stringProperty(PROP_NOTIFY),
 					intProperty(PROP_NOTIFY_RETRIES, ZoneNotifier.DEFAULT_RETRIES),
 					intProperty(PROP_NOTIFY_TIMEOUT, ZoneNotifier.DEFAULT_TIMEOUT));
@@ -1062,6 +1079,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			}
 		}
 		dynamicLoaded = System.currentTimeMillis();
+		flushDynamicSigning();
 	}
 
 	/*
@@ -1116,6 +1134,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				}
 			}
 		}
+		flushDynamicSigning();
 	}
 
 	/** storeDynamicFile, with an I/O failure reported like a database failure. */
@@ -1382,7 +1401,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		if( zoneDir == null || seen == null ) {
 			return true;
 		}
-		return !currentZoneFiles().equals(seen);
+		return !currentZoneFiles().equals(seen) || dnssecKeysChanged();
 	}
 
 	/**
@@ -1401,6 +1420,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		zoneDir = new File(dirName).getCanonicalFile();
 
 		Map<String, Long> seen = new HashMap<String, Long>();
+		reloadDnssecKeys();
 		try {
 			if( !zoneDir.exists() ) {
 				throw new IOException(PROP_ZONE_DIR+" ="+zoneDir+" does not exist!!! exiting from "+getClass().getName());
@@ -1452,6 +1472,24 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 					Zone dup = zones.put(z.getName().toLowerCase(),z);
 					if( dup != null && dup != z ) {
 						logError("Zone "+z.getName()+" is defined by more than one file, using "+file);
+					}
+				}
+			}
+
+			//  DNSSEC: sign the zones that have keys (a zone whose data, keys and
+			//  dynamic entries did not change keeps its signatures)
+			Map<String, Zone> unsignedByName = new HashMap<String, Zone>();
+			for(Map.Entry<String, Zone> e : zones.entrySet()) {
+				unsignedByName.put(e.getKey(), e.getValue().getUnsigned());
+			}
+			for(Map.Entry<String, Zone> e : new ArrayList<Map.Entry<String, Zone>>(byFile.entrySet())) {
+				Zone loaded = e.getValue();
+				Zone served = prepareZone(loaded, old.byFile.get(e.getKey()), false, unsignedByName);
+				if( served != loaded ) {
+					e.setValue(served);
+					String k = loaded.getName().toLowerCase();
+					if( zones.get(k) == loaded ) {
+						zones.put(k, served);
 					}
 				}
 			}
@@ -1578,6 +1616,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				retMsg = step2(req,retMsg);
 				if( retMsg != null && req.getCnameTarget() != null ) {
 					retMsg = completeOutOfZoneCname(req, retMsg);
+				}
+				if( retMsg != null && req.getEdns().isDnssecOk() ) {
+					//  DNSSEC records for the parts of the answer from signed zones
+					DnssecResponder.apply(retMsg, s.getName(), s.getType(), n -> getZoneFor(new Name(n)));
 				}
 				ret.add(retMsg);
 			}			
@@ -1714,6 +1756,12 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 					logError("Error reloading zones", e);
 				}
 			}
+			try {
+				flushDynamicSigning();
+				resignDue(System.currentTimeMillis()/1000);
+			} catch(RuntimeException e) {
+				logError("Error signing zones", e);
+			}
 
 			try {
 				setState("Waiting for admin connection");
@@ -1827,6 +1875,15 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		//Section original=null;
 
 		Zone zone = getZone(question);
+		if( zone != null && question.getType() == DNS.DS && zone.isApex(question.getName()) ) {
+			//  The DS of a zone we serve is in its parent (RFC 4035 3.1.4.1):
+			//  answer from the parent zone if we serve that too
+			Name parent = question.getNameAsName().getParentName();
+			Zone p = parent == null ? null : getZoneFor(parent);
+			if( p != null ) {
+				zone = p;
+			}
+		}
 		if( zone == null ) {
 			if( isCommon(question) ) {
 				zone = getDefaultZone();
@@ -1947,12 +2004,29 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		//  A dynamic entry for the name still wins.
 		if( zoneCutReferrals && !dynamic.containsKey(target) ) {
 			List<RR> cut = zone.findDelegation(target);
+			if( cut != null && type == DNS.DS && cut.get(0).getName().equalsIgnoreCase(stripDot(target)) ) {
+				//  DS records live in the parent, at the delegation (RFC 4035
+				//  3.1.4.1): answer from here, not with a referral
+				ret.setResponseCodeNoError();
+				for(RR d : zone.exactRecords(target)) {
+					if( d.getType() == DNS.DS ) {
+						ret.addAnswer(d.copy());
+					}
+				}
+				if( ret.getAnswerCount() == 0 ) {
+					ret.addAuthority(zone.getNegativeSoa());
+				}
+				return ret;
+			}
 			if( cut != null ) {
 				return referral(ret, zone, cut);
 			}
 		}
 
-		if( type == DNS.SOA ) {
+		//  In a signed zone only the apex has an SOA: other names get NODATA
+		//  (validators reject the renamed SOA the default zone makes up)
+		boolean signedName = zone.getSigned() != null && zone.contains(target);
+		if( type == DNS.SOA && !(signedName && !zone.isApex(target)) ) {
 			Soa soa = zone.getSoa();
 			RR realrr = soa.copy();
 			realrr.replaceWildCards(targetName);			
@@ -1997,7 +2071,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			//  non-terminal (has names below it), which exists: NODATA.
 			//  Either way the SOA goes in the authority section (RFC 2308 3).
 			//  After a CNAME this also sets the final RCODE (RFC 6604).
-			if( zone.hasNamesBelow(target) ) {
+			if( signedName ? zone.getSigned().isEmptyNonTerminal(target) : zone.hasNamesBelow(target) ) {
+				//  (in a signed zone a name with only a wildcard below it exists too, RFC 4592 2.2.2)
 				ret.setResponseCodeNoError();
 			} else {
 				ret.setResponseCodeNameError();
@@ -2007,13 +2082,24 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 			//  Since we found the name it's not a name error even if we may not have the type
 			ret.setResponseCodeNoError();
+			//  A wildcard match in a signed zone (RFC 4592): the records get the
+			//  query name as owner, however many labels the '*' stands for; the
+			//  wildcard's NSEC is not part of the answer
+			boolean fromWildcard = signedName && !list.isEmpty() && list.get(0).getNameAsName().hasWildCard()
+					&& !targetName.hasWildCard();
 
 			for(int i=0,sz=list.size(); i< sz; i++ ) {
 				rr = (RR)list.get(i);
+				if( fromWildcard && rr.getType() == DNS.NSEC ) {
+					continue;
+				}
 				if( (myType=rr.getType()) == type || myType == DNS.CNAME || type == DNS.QTYPE_ALL)  {
 					//  Just in case the match is a wild card
 					RR realrr = rr.copy();
 					realrr.replaceWildCards(targetName);
+					if( fromWildcard ) {
+						realrr.setName(targetName.toString());
+					}
 					ret.addAnswer(realrr);
 
 					switch (myType ) {
@@ -2313,14 +2399,27 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		List<Name> names = zone.getNames();
 		List<List<RR>> rrs = zone.getRrs();
 		for(int i=0; i < names.size() && i < rrs.size(); i++ ) {
-			if( dynNames.contains(names.get(i).toString().toLowerCase()) ) {
-				continue;
-			}
+			boolean dyn = dynNames.contains(names.get(i).toString().toLowerCase());
 			for(RR rr : rrs.get(i)) {
-				if( rr.getType() != DNS.SOA ) {
+				//  (a dynamic entry replaces the records at its name, but not the NSEC of a signed zone)
+				if( rr.getType() != DNS.SOA && (!dyn || rr.getType() == DNS.NSEC) ) {
 					records.add(rr);
 				}
 			}
+		}
+		SignedZone sz = zone.getSigned();
+		if( sz != null ) {
+			for(List<us.bringardner.net.dns.Rrsig> sigs : sz.allSigs().values()) {
+				records.addAll(sigs);
+			}
+			//  In canonical name order, each name's records together (as other
+			//  servers send a signed zone; some tools expect it)
+			RR first = records.get(0);
+			List<RR> rest = new ArrayList<RR>(records.subList(1, records.size()));
+			rest.sort((x, y) -> Canonical.compareNames(x.getName(), y.getName()));
+			records.clear();
+			records.add(first);
+			records.addAll(rest);
 		}
 		records.add(soa.copy());
 
@@ -2390,7 +2489,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			}
 			ZoneUpdater.Result r;
 			try {
-				r = ZoneUpdater.apply(zone, reqMsg);
+				//  (a signed zone is updated without its DNSSEC records, then signed again)
+				r = ZoneUpdater.apply(zone.getUnsigned(), reqMsg);
 			} catch(RuntimeException ex) {
 				//  e.g. a record the zone file reader can't take: nothing was changed
 				logError("UPDATE of "+zone.getName()+" failed", ex);
@@ -2405,13 +2505,14 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 					ret.setResponseCodeServerFailure();
 					return ret;
 				}
-				publishUpdatedZone(zone, r.zone);
+				Zone served = prepareZone(r.zone, zone, true, zoneSet.zones);
+				publishUpdatedZone(zone, served);
 				final int n = r.journal.size();
 				log(() -> "UPDATE of "+zone.getName()+" from "+req.getClient()+(key == null ? "" : " key "+key)
 						+": "+n+" journal entries, serial "+Integer.toUnsignedString(r.zone.getSoa().getSerial()));
 				ZoneNotifier nf = notifier;
 				if( nf != null ) {
-					nf.notifyZone(r.zone);
+					nf.notifyZone(served);
 				}
 			}
 			ret.getHeader().setRCODE(r.rcode);
@@ -2421,6 +2522,11 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 	/** Append the changes to the zone's journal (created with the zone file's serial as its base). */
 	private void writeJournal(Zone zone, List<String> lines, QueryData req) throws IOException {
+		writeJournal(zone, lines, "from "+req.getClient()+(req.getTsigKey() != null ? " key "+req.getTsigKey() : ""));
+	}
+
+	/** Append lines to the zone's journal; why is written as a comment. */
+	private void writeJournal(Zone zone, List<String> lines, String why) throws IOException {
 		File jnl = zone.getJournalFile();
 		if( jnl == null ) {
 			//  A zone that was not loaded from a file (only kept in memory)
@@ -2434,11 +2540,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 					.append(zone.getMasterFile().getName()).append(".\n; Edit the zone file and raise its serial to start over.\n");
 				b.append("base ").append(Integer.toUnsignedString(zone.getSoa().getSerial())).append('\n');
 			}
-			b.append("; ").append(new Date()).append(" from ").append(req.getClient());
-			if( req.getTsigKey() != null ) {
-				b.append(" key ").append(req.getTsigKey());
-			}
-			b.append('\n');
+			b.append("; ").append(new Date()).append(' ').append(why).append('\n');
 			for(String l : lines) {
 				b.append(l).append('\n');
 			}
@@ -2587,6 +2689,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	/** Publish a fully built A as the dynamic entry for its name. */
 	private void putDynamic(A a) {
 		dynamic.put(dynamicKey(a.getName()), Collections.singletonList(a));
+		dynamicDirty = true;
 	}
 
 	/**
@@ -2618,6 +2721,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		A ret = buildDynamic(name, addr);
 		if( ret != null ) {
 			putDynamic(ret);
+			flushDynamicSigning();
 		}
 		return ret;
 	}
@@ -2649,6 +2753,221 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * @param nn, The fqdns name
 	 * @return the correct zone or null if the name is not in a valid domain.
 	 */
+	// ------------------------------------------------------------ DNSSEC
+
+	private volatile File dnssecKeyDir;
+	private volatile int dnssecValidity = ZoneSigner.DEFAULT_VALIDITY;
+	private volatile Map<String, List<DnssecKey>> dnssecKeys = Collections.emptyMap();
+	private volatile long dnssecKeyStamp = Long.MIN_VALUE;
+	//  A dynamic entry changed: signed zones may need signing again
+	private volatile boolean dynamicDirty;
+
+	/** The directory of the DNSSEC keys; null for the default (the zone directory). */
+	public void setDnssecKeyDir(File dir) {
+		dnssecKeyDir = dir;
+		dnssecKeyStamp = Long.MIN_VALUE;
+	}
+
+	/** The directory the DNSSEC keys are read from (null if there is none yet). */
+	public File getDnssecKeyDir() {
+		File d = dnssecKeyDir;
+		return d != null ? d : zoneDir;
+	}
+
+	/** How long signatures are valid, in seconds (at least an hour). */
+	public void setDnssecValidity(int seconds) {
+		if( seconds < 3600 ) {
+			throw new IllegalArgumentException(PROP_DNSSEC_VALIDITY+" must be at least an hour: "+seconds);
+		}
+		dnssecValidity = seconds;
+	}
+
+	public int getDnssecValidity() {
+		return dnssecValidity;
+	}
+
+	/** The keys found for each zone (lower case name, no trailing dot). */
+	public Map<String, List<DnssecKey>> getDnssecKeys() {
+		return dnssecKeys;
+	}
+
+	private boolean dnssecKeysChanged() {
+		return DnssecKey.dirStamp(getDnssecKeyDir()) != dnssecKeyStamp;
+	}
+
+	/** Read the key directory again if a key file was added, removed or changed. */
+	synchronized void reloadDnssecKeys() {
+		File dir = getDnssecKeyDir();
+		long stamp = DnssecKey.dirStamp(dir);
+		if( stamp == dnssecKeyStamp ) {
+			return;
+		}
+		List<String> errors = new ArrayList<String>();
+		Map<String, List<DnssecKey>> keys = DnssecKey.loadDir(dir, errors);
+		for(String e : errors) {
+			logError("DNSSEC key "+e);
+		}
+		for(Map.Entry<String, List<DnssecKey>> e : keys.entrySet()) {
+			final String z = e.getKey();
+			final String list = e.getValue().toString();
+			log(() -> "DNSSEC keys for "+z+": "+list);
+		}
+		dnssecKeys = keys;
+		dnssecKeyStamp = stamp;
+	}
+
+	/**
+	 * The dynamic entries in a zone (not in a zone below it that we also
+	 * serve): name -> records.
+	 */
+	private Map<String, List<? extends RR>> dynamicIn(Zone z, Map<String, Zone> zones) {
+		Map<String, List<? extends RR>> ret = new java.util.TreeMap<String, List<? extends RR>>();
+		String apex = Canonical.key(z.getName());
+		for(Map.Entry<String, List<A>> e : dynamic.entrySet()) {
+			String n = Canonical.key(e.getKey());
+			if( !Canonical.isBelow(n, apex, true) ) {
+				continue;
+			}
+			//  The closest zone we serve for the name must be this one
+			String p = n;
+			boolean mine = true;
+			while( !p.equals(apex) ) {
+				if( zones.containsKey(p) ) {
+					mine = false;
+					break;
+				}
+				p = p.substring(p.indexOf('.')+1);
+			}
+			if( mine ) {
+				ret.put(n, e.getValue());
+			}
+		}
+		return ret;
+	}
+
+	private static String fingerprint(Map<String, List<? extends RR>> dyn) {
+		StringBuilder b = new StringBuilder();
+		for(Map.Entry<String, List<? extends RR>> e : dyn.entrySet()) {
+			b.append(e.getKey());
+			for(RR rr : e.getValue()) {
+				b.append(' ').append(rr.getTTL()).append(' ').append(Zone.rdataText(rr));
+			}
+			b.append('\n');
+		}
+		return b.toString();
+	}
+
+	/**
+	 * The zone to serve for a loaded (or updated) zone: signed if the key
+	 * directory has keys for it, as it is otherwise.
+	 * 
+	 * @param current the zone served now under that name, or null. It is
+	 *        kept if its data, keys and dynamic entries are unchanged (unless
+	 *        force), and if signing fails while its signatures are still valid.
+	 * @param zones the zones (by lower case name) that will be served
+	 */
+	Zone prepareZone(Zone loaded, Zone current, boolean force, Map<String, Zone> zones) {
+		Zone unsigned = loaded.getUnsigned();
+		String name = Canonical.key(unsigned.getName());
+		List<DnssecKey> keys = dnssecKeys.get(name);
+		SignedZone cs = current == null ? null : current.getSigned();
+		if( keys == null || keys.isEmpty() ) {
+			if( cs != null ) {
+				logError("DNSSEC: no keys for "+name+" any more, serving it unsigned");
+			}
+			return unsigned;
+		}
+		long now = System.currentTimeMillis()/1000;
+		Map<String, List<? extends RR>> dyn = dynamicIn(unsigned, zones);
+		String fp = fingerprint(dyn);
+		if( !force && cs != null && cs.unsigned == unsigned && cs.keyId.equals(ZoneSigner.keyId(keys, now))
+				&& cs.dynamicFingerprint.equals(fp) ) {
+			return current;
+		}
+		try {
+			long start = System.currentTimeMillis();
+			ZoneSigner.Result r = ZoneSigner.sign(unsigned, dyn, fp, keys, now, dnssecValidity);
+			for(String w : r.warnings) {
+				logError("DNSSEC: "+w);
+			}
+			SignedZone sz = r.zone.getSigned();
+			final long ms = System.currentTimeMillis()-start;
+			log(() -> "DNSSEC: signed "+name+" (serial "+Integer.toUnsignedString(unsigned.getSoa().getSerial())+", "
+					+sz.size()+" names, "+sz.rrsigCount+" signatures, "+ms+" ms), valid until "
+					+new Date(sz.expires*1000));
+			return r.zone;
+		} catch(RuntimeException ex) {
+			if( cs != null && cs.expires > now && cs.unsigned == unsigned ) {
+				logError("DNSSEC: can't sign "+name+" ("+ex.getMessage()+"), still serving the previous signatures", ex);
+				return current;
+			}
+			logError("DNSSEC: can't sign "+name+" ("+ex.getMessage()+"), serving it unsigned", ex);
+			return unsigned;
+		}
+	}
+
+	/** Sign again the signed zones whose dynamic entries changed. */
+	void flushDynamicSigning() {
+		if( !dynamicDirty ) {
+			return;
+		}
+		synchronized(this) {
+			dynamicDirty = false;
+			ZoneSet cur = zoneSet;
+			for(Zone z : cur.zones.values()) {
+				SignedZone sz = z.getSigned();
+				if( sz != null && !fingerprint(dynamicIn(sz.unsigned, cur.zones)).equals(sz.dynamicFingerprint) ) {
+					publishUpdatedZone(z, prepareZone(sz.unsigned, z, true, cur.zones));
+				}
+			}
+		}
+	}
+
+	/**
+	 * Sign again, with the next serial, the zones whose signatures are due to
+	 * be renewed (a quarter of their validity left) or whose keys reached a
+	 * timing event (Publish, Activate, Inactive, Delete). The new serial is
+	 * written to the zone's journal so it survives a restart, and the
+	 * secondaries get a NOTIFY.
+	 * 
+	 * @param now seconds since 1970
+	 * @return the number of zones signed
+	 */
+	synchronized int resignDue(long now) {
+		int ret = 0;
+		ZoneSet cur = zoneSet;
+		for(Zone z : new ArrayList<Zone>(cur.zones.values())) {
+			SignedZone sz = z.getSigned();
+			if( sz == null || now < sz.refreshAt ) {
+				continue;
+			}
+			Zone base = sz.unsigned;
+			Zone next = base.copyForUpdate();
+			Soa soa = (Soa)base.getSoa().copy();
+			soa.setSerial(soa.getSerial()+1);
+			next.replaceSoa(soa);
+			try {
+				writeJournal(base, Collections.singletonList("serial "+Integer.toUnsignedString(soa.getSerial())),
+						"signed again (DNSSEC signatures renewed)");
+			} catch(IOException ex) {
+				logError("DNSSEC: can't write the journal of "+base.getName()+"; not signed again", ex);
+				continue;
+			}
+			Zone served = prepareZone(next, z, true, zoneSet.zones);
+			publishUpdatedZone(z, served);
+			ZoneNotifier nf = notifier;
+			if( nf != null ) {
+				nf.notifyZone(served);
+			}
+			ret++;
+		}
+		return ret;
+	}
+
+	private static String stripDot(String n) {
+		return n.endsWith(".") ? n.substring(0, n.length()-1) : n;
+	}
+
 	private Zone getZoneFor(Name nn) {
 		Zone ret = null;
 
@@ -2723,6 +3042,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			after.remove(dynamicKey(name));
 			storeDynamicFile(after);
 			dynamic.remove(dynamicKey(name));
+			dynamicDirty = true;
 		}
+		flushDynamicSigning();
 	}
 }

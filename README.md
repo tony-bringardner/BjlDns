@@ -11,9 +11,10 @@ The intent of this DNS code is to support a large number of domains with very li
  +  Supports a common configuration that will be used for any domain that does not have a unique configuration.
  +  Domains may be in a database or file system
  +  Support Dynamic DNS (DDNS) with trivial configuration
- +  Zone file record types: SOA, NS, A, AAAA, CNAME, PTR, MX, TXT, SPF, HINFO, SRV, CAA, HTTPS, SVCB (other types are passed through unchanged when resolving)
+ +  Zone file record types: SOA, NS, A, AAAA, CNAME, PTR, MX, TXT, SPF, HINFO, SRV, CAA, HTTPS, SVCB, DS (other types are passed through unchanged when resolving)
+ +  DNSSEC: zones are signed by the server itself when it has keys for them (see below)
 
-Not supported: incremental zone transfer (IXFR is answered with the whole zone), acting as a secondary (incoming NOTIFY gets NOTIMP), DNSSEC, and the `$GENERATE` zone file directive.
+Not supported: incremental zone transfer (IXFR is answered with the whole zone), acting as a secondary (incoming NOTIFY gets NOTIMP), NSEC3, validating answers from other servers when resolving, and the `$GENERATE` zone file directive.
 
 # Zone files
 
@@ -31,7 +32,29 @@ Each `<zone>.txt` file in `JDns.zone.dir` is one zone, in the RFC 1035 master fi
 
 Allowed for requests signed with a key in `JDns.updateKeys` (or from `JDns.updateAllow`); everyone else gets REFUSED. Prerequisites, adds and all three kinds of delete are supported, with the RFC's rules (the apex SOA and NS RRset can't be deleted, never the last NS, no other data next to a CNAME). An update is all or nothing.
 
-The zone file is never rewritten. Changes are appended to a journal next to it, `<zone file>.jnl`, before they are served, and replayed on top of the zone file when it is loaded. Each change raises the SOA serial by one and sends NOTIFY to the secondaries. To edit a zone by hand after updates, edit the zone file (it keeps the updates as long as the serial stays the same) or raise its serial to start over: the journal is then renamed `.jnl.old` and not used. Updates can add A, AAAA, NS, CNAME, PTR, MX, TXT, SPF, HINFO, SRV, CAA, HTTPS and SVCB records; other types are REFUSED. A TXT record keeps one string (several strings are joined).
+The zone file is never rewritten. Changes are appended to a journal next to it, `<zone file>.jnl`, before they are served, and replayed on top of the zone file when it is loaded. Each change raises the SOA serial by one and sends NOTIFY to the secondaries. To edit a zone by hand after updates, edit the zone file (it keeps the updates as long as the serial stays the same) or raise its serial to start over: the journal is then renamed `.jnl.old` and not used. Updates can add A, AAAA, NS, CNAME, PTR, MX, TXT, SPF, HINFO, SRV, CAA, HTTPS, SVCB and DS records; other types are REFUSED. A signed zone is signed again after each update. A TXT record keeps one string (several strings are joined).
+
+# DNSSEC
+
+A zone is signed when the key directory (`JDns.dnssecKeyDir`, by default the zone directory) has keys for it. The server signs it when it loads it, after every dynamic update or dynamic entry change, and again before the signatures expire; nothing needs to be run by hand after the keys exist.
+
+1. Make a key: `java -cp bjl_dns.jar:bjl_core.jar:bjl_io.jar us.bringardner.net.dns.dnssec.DnssecKeyTool keygen -d zones example.com`. This writes `Kexample.com.+013+<tag>.key` and `.private` (keep that one secret) and prints the DS record. One key (ECDSA P-256, a combined signing key) is all a zone needs; `-ksk` / `-zsk` make separate key and zone signing keys, `-a` picks the algorithm: ECDSAP256SHA256 (default), ECDSAP384SHA384, ED25519 (Java 15 or later), RSASHA256, RSASHA512. Keys made with BIND's `dnssec-keygen` work too.
+2. Start (or wait for the next reload): the zone is served signed.
+3. Give the DS record to the parent zone (your registrar). `DnssecKeyTool ds -d zones example.com` prints it again. Until the parent has it, validators treat the zone as unsigned; once it does, they reject answers that don't verify.
+
+What the server does:
+ +  Adds the DNSKEY set and an NSEC chain, and signs every RRset: the DNSKEY set with the key signing keys (flags 257), the rest with the zone signing keys (256), or everything with one key if there is only one kind. At a delegation only the DS set and the NSEC are signed; glue is not.
+ +  Answers queries with the DO bit with the RRSIGs, and proves what doesn't exist with NSEC records (NXDOMAIN, NODATA, wildcards, delegations without a DS). Queries without the DO bit get the same answers as before.
+ +  DS records go in the parent zone file at the delegation, e.g. `child IN DS 12345 13 2 <digest>`. A DS query is answered from the parent, even when the server serves the child too.
+ +  Signatures are valid for `JDns.dnssecValidity` (14 days) from an hour ago. When a quarter is left the zone is signed again with the next serial (written to the journal, so it survives a restart) and the secondaries get a NOTIFY. Zone transfers include the signatures.
+ +  Key rollover: every key file of a zone is used. A `.key` file without its `.private` file is published in the DNSKEY set but doesn't sign. BIND's timing fields in the `.private` file (`Publish`, `Activate`, `Inactive`, `Delete`, set with `dnssec-settime`) are followed. Adding, removing or changing a key file re-signs the zone.
+ +  If a zone can't be signed (e.g. no key has its private file), the error is logged and the previous signatures are served while they are valid, otherwise the zone is served unsigned.
+
+In a signed zone:
+ +  Wildcards follow RFC 4592, as validators expect: `*.example.com` also matches `a.b.example.com`, but never a name that exists or has names below it.
+ +  An SOA query for a name other than the apex gets NODATA (the made-up SOA the default zone gives other names can't be signed).
+ +  DNSKEY, RRSIG and NSEC records can't be put in the zone file or added with UPDATE (DS can).
+ +  Names outside the zone itself (the `*.*.` patterns a default zone uses for other domains) are served unsigned.
    
  
 Dependencies:  
@@ -106,6 +129,8 @@ A bind address of `localhost` means this host's own name (its network address), 
 | `JDns.updateKeys` | none | TSIG key names whose signed dynamic UPDATE requests (RFC 2136, e.g. `nsupdate -k`) may change zones |
 | `JDns.updateAllow` | none | Addresses / networks allowed to send unsigned UPDATE requests. Prefer `JDns.updateKeys` |
 | `JDns.notifyKey` | none | TSIG key to sign NOTIFY messages with; the secondary's answer must then be signed too |
+| `JDns.dnssecKeyDir` | `JDns.zone.dir` | Directory of the DNSSEC key files (`K<zone>.+<alg>+<tag>.key` and `.private`). A zone with keys there is signed |
+| `JDns.dnssecValidity` | 14d | How long DNSSEC signatures are valid (at least 1h); zones are signed again when a quarter of it is left |
 | `JDns.notifyRetries` | 5 | Attempts per NOTIFY |
 | `JDns.notifyTimeout` | 2000 | First wait (ms) for a NOTIFY answer, doubled after each attempt |
 | `JDns.adminMaxLine` | 8192 | Longest admin command line in bytes; a longer line ends the session |

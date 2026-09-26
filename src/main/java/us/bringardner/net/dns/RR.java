@@ -160,6 +160,10 @@ public  class RR extends Section
 		case CAA:	ret = new Caa(sec);break;
 		case SVCB:	ret = new Svcb(sec);break;
 		case HTTPS:	ret = new Https(sec);break;
+		case DS:	ret = new Ds(sec);break;
+		case DNSKEY:	ret = new Dnskey(sec);break;
+		case RRSIG:	ret = new Rrsig(sec);break;
+		case NSEC:	ret = new Nsec(sec);break;
 
 		//  This is to prevent the log file from filling with unsupported errors
 		case OPT	: ret = new RR(sec);break;

@@ -32,8 +32,9 @@ import java.util.List;
  * take. Without EDNS every answer over 512 bytes was truncated and the
  * client had to retry over TCP. With it we answer up to
  * min(client size, {@link #getServerUdpSize()}) bytes over UDP and echo an
- * OPT record, as the RFC requires. DNSSEC (the DO bit) and EDNS options are
- * not supported; options are ignored and the DO bit is never set.
+ * OPT record, as the RFC requires. The DO bit (DNSSEC OK, RFC 3225) is read
+ * and copied to the response; signed zones then add their DNSSEC records.
+ * EDNS options are ignored.
  * <p>
  * The default server size is 1232 bytes (the DNS Flag Day 2020 value, which
  * avoids IP fragmentation); property JDns.ednsUdpSize, 512 turns the larger
@@ -63,18 +64,25 @@ public final class Edns implements DNS {
 	/** What a request said about EDNS. */
 	public static final class Request {
 		/** A request without an OPT record. */
-		public static final Request NONE = new Request(false, MAX_UDP_PAYLOAD, 0, false);
+		public static final Request NONE = new Request(false, MAX_UDP_PAYLOAD, 0, false, false);
 
 		private final boolean present;
 		private final int udpSize;
 		private final int version;
 		private final boolean malformed;
+		private final boolean dnssecOk;
 
-		Request(boolean present, int udpSize, int version, boolean malformed) {
+		Request(boolean present, int udpSize, int version, boolean malformed, boolean dnssecOk) {
 			this.present = present;
 			this.udpSize = udpSize;
 			this.version = version;
 			this.malformed = malformed;
+			this.dnssecOk = dnssecOk;
+		}
+
+		/** The DO bit: the client wants DNSSEC records (RFC 3225). */
+		public boolean isDnssecOk() {
+			return present && dnssecOk;
 		}
 
 		/** Did the request carry an OPT record? */
@@ -110,7 +118,7 @@ public final class Edns implements DNS {
 		}
 
 		public String toString() {
-			return present ? "EDNS"+version+" udp="+udpSize+(malformed ? " malformed":"") : "no EDNS";
+			return present ? "EDNS"+version+" udp="+udpSize+(dnssecOk ? " DO" : "")+(malformed ? " malformed":"") : "no EDNS";
 		}
 	}
 
@@ -138,13 +146,19 @@ public final class Edns implements DNS {
 		//  CLASS holds the payload size; TTL = ext-rcode(8) version(8) DO(1) Z(15)
 		int size = Math.max(MAX_UDP_PAYLOAD, opt.getDnsClass() & 0xffff);
 		int version = (opt.getTTL() >>> 16) & 0xff;
-		return new Request(true, size, version, malformed);
+		boolean dnssecOk = (opt.getTTL() & 0x8000) != 0;
+		return new Request(true, size, version, malformed, dnssecOk);
 	}
 
 	/** An OPT record with our UDP size and the given extended RCODE bits. */
 	public static RR newOpt(int extendedRcode) {
+		return newOpt(extendedRcode, false);
+	}
+
+	/** An OPT record with our UDP size, the extended RCODE bits and the DO bit. */
+	public static RR newOpt(int extendedRcode, boolean dnssecOk) {
 		RR opt = new RR("", OPT, serverUdpSize);
-		opt.setTTL((extendedRcode & 0xff) << 24);
+		opt.setTTL(((extendedRcode & 0xff) << 24) | (dnssecOk ? 0x8000 : 0));
 		opt.setRdata(new byte[0]);
 		return opt;
 	}
@@ -169,7 +183,8 @@ public final class Edns implements DNS {
 			ext = rcode >> 4;
 			response.setResponseCode(rcode & 0xf);
 		}
-		response.addAdditional(newOpt(ext));
+		//  The DO bit is copied from the request (RFC 3225 3)
+		response.addAdditional(newOpt(ext, request.isDnssecOk()));
 	}
 
 	/** Build the BADVERS reply for a request with an unsupported EDNS version. */

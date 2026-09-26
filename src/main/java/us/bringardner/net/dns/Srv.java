@@ -122,7 +122,7 @@ public class Srv extends RR {
 		out.setShort(priority);
 		out.setShort(weight);
 		out.setShort(port);
-		writeUncompressed(out, target.toString());
+		writeUncompressed(out, out.isCanonical() ? target.toString().toLowerCase(java.util.Locale.ROOT) : target.toString());
 		out.setRdLength();
 	}
 

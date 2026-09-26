@@ -287,6 +287,11 @@ public interface DNS {
 		static final int RP    = 17; // Responsible Person		
 		static final int RT    = 21; // Route Through		//EastLake
 		static final int SINK	=40;		// RFC2782		
+		static final int DS    = 43;  // Delegation signer (RFC 4034, DNSSEC)
+		static final int RRSIG = 46;  // Signature (RFC 4034, DNSSEC)
+		static final int NSEC  = 47;  // Next secure (RFC 4034, DNSSEC)
+		static final int DNSKEY= 48;  // Zone key (RFC 4034, DNSSEC)
+		static final int NSEC3 = 50;  // Hashed next secure (RFC 5155)
 		static final int SVCB  = 64;  // Service binding (RFC 9460)
 		static final int HTTPS = 65;  // Service binding for HTTPS (RFC 9460)
 		static final int CAA   = 257; // Certification Authority Authorization (RFC 8659)

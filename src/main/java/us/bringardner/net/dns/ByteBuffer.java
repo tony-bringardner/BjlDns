@@ -51,6 +51,21 @@ public  class ByteBuffer {
 
 	int rdlengthPos = 0;
 
+	//  DNSSEC canonical form (RFC 4034 6.2): names lower case and never compressed
+	private boolean canonical = false;
+
+	/**
+	 * Write names in DNSSEC canonical form: lower case, without compression
+	 * pointers (RFC 4034 6.2). Used to build the data that is signed.
+	 */
+	public void setCanonical(boolean on) {
+		canonical = on;
+	}
+
+	public boolean isCanonical() {
+		return canonical;
+	}
+
 
 
 	/**
@@ -547,6 +562,18 @@ ARCOUNT         an unsigned 16 bit integer specifying the number of
 			//  "" used to be written as an empty label plus the terminator
 			setByte((byte)0);
 			return ;
+		}
+		if( canonical ) {
+			name = name.toLowerCase(java.util.Locale.ROOT);
+			for(String label : name.split("[.]", -1)) {
+				if( !label.isEmpty() ) {
+					byte [] b = label.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+					setByte((byte)b.length);
+					setBytes(b);
+				}
+			}
+			setByte((byte)0);
+			return;
 		}
 
 		ptr p = (ptr)lables.get(name);

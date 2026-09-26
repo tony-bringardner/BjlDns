@@ -91,6 +91,24 @@ public class Zone implements DNS {
 
 	private File masterFile;
 
+	//  DNSSEC: set on the signed copy that is served (see ZoneSigner)
+	private volatile SignedZone signed;
+
+	/** The DNSSEC signatures and NSEC chain, or null if the zone is not signed. */
+	public SignedZone getSigned() {
+		return signed;
+	}
+
+	void setSigned(SignedZone signed) {
+		this.signed = signed;
+	}
+
+	/** The zone as loaded (and updated), without DNSSEC records: itself if it is not signed. */
+	public Zone getUnsigned() {
+		SignedZone s = signed;
+		return s == null ? this : s.unsigned;
+	}
+
 	public List<Name> getNames() {
 		return names;
 	}
@@ -256,6 +274,27 @@ public class Zone implements DNS {
 			rr = caa;
 			break;
 		}
+
+		case DS: {
+			//  name TTL IN DS keytag algorithm digesttype digest (the digest may be split)
+			if( list.size() < 7 ) {
+				throw new IllegalArgumentException("DS needs key tag, algorithm, digest type and digest");
+			}
+			us.bringardner.net.dns.Ds ds = new us.bringardner.net.dns.Ds(rrName,dnsClass);
+			ds.setKeyTag(Integer.parseInt((String)list.get(3)));
+			ds.setAlgorithm(Integer.parseInt((String)list.get(4)));
+			ds.setDigestType(Integer.parseInt((String)list.get(5)));
+			ds.setDigest(String.join("", list.subList(6, list.size())));
+			rr = ds;
+			break;
+		}
+
+		case DNSKEY:
+		case RRSIG:
+		case NSEC:
+		case NSEC3:
+			throw new IllegalArgumentException(Utility.TYPENAMES[type]+" records are made by the server when it signs the zone"
+					+" (keys in JDns.dnssecKeyDir); remove them from the zone file");
 
 		case SPF: Spf spf = new Spf(rrName,dnsClass);
 		rr = spf;
@@ -505,6 +544,37 @@ public class Zone implements DNS {
 		return ret;
 	}
 
+	/**
+	 * Name lookup with the wildcard rules of RFC 4592, used in signed zones
+	 * (validators check answers against them): a name that exists, even as
+	 * an empty non-terminal, is never matched by a wildcard; otherwise only
+	 * the wildcard directly below the closest encloser matches, however many
+	 * labels the name has below it.
+	 */
+	private List<RR> strictMatchingRRs(String key, SignedZone sz) {
+		java.util.Map<String,Integer> exact = exactIndex;
+		List<Integer> wild = wildIndex;
+		if( exact == null || wild == null ) {
+			buildIndex();
+			exact = exactIndex;
+			wild = wildIndex;
+		}
+		Integer hit = exact.get(key);
+		if( hit != null ) {
+			return rrs.get(hit);
+		}
+		if( sz.isEmptyNonTerminal(key) ) {
+			return null;
+		}
+		String source = "*."+sz.closestEncloser(key);
+		for(int i : wild) {
+			if( indexKey(names.get(i)).equals(source) ) {
+				return rrs.get(i);
+			}
+		}
+		return null;
+	}
+
 	/** For tests: the entry the original linear scan finds, or null. */
 	List<RR> linearMatchingRRs(Name name){
 		int idx = linearMatchingIndex(name);
@@ -512,6 +582,13 @@ public class Zone implements DNS {
 	}
 
 	public List<RR> getMatchingRRs(Name name){
+		SignedZone sz = signed;
+		if( sz != null && !name.hasWildCard() ) {
+			String key = indexKey(name);
+			if( us.bringardner.net.dns.dnssec.Canonical.isBelow(key, sz.apex, true) ) {
+				return strictMatchingRRs(key, sz);
+			}
+		}
 		int idx = getMatchingIndex(name);
 
 		List<RR> ret = null;
@@ -1116,7 +1193,7 @@ public class Zone implements DNS {
 	public static boolean isUpdatableType(int type) {
 		switch(type) {
 		case A: case AAAA: case NS: case CNAME: case PTR: case MX: case TXT: case SPF:
-		case HINFO: case SRV: case CAA: case SVCB: case HTTPS:
+		case HINFO: case SRV: case CAA: case SVCB: case HTTPS: case DS:
 			return true;
 		default:
 			return false;
@@ -1210,6 +1287,28 @@ public class Zone implements DNS {
 			i = names.size()-1;
 		}
 		rrs.get(i).add(rr);
+		invalidateIndex();
+	}
+
+	/** Add records, each at exactly its own name (for many records at once). */
+	public void addRecords(List<RR> list) {
+		java.util.Map<String,Integer> at = new java.util.HashMap<String,Integer>();
+		for(int i=0; i < names.size(); i++ ) {
+			at.putIfAbsent(names.get(i).toString().toLowerCase(java.util.Locale.ROOT), i);
+		}
+		for(RR rr : list) {
+			String key = stripDot(rr.getName()).toLowerCase(java.util.Locale.ROOT);
+			Integer i = at.get(key);
+			if( i == null ) {
+				Name n = new Name(stripDot(rr.getName()));
+				n.setDoWildCard(true);
+				names.add(n);
+				rrs.add(new ArrayList<RR>());
+				i = names.size()-1;
+				at.put(key, i);
+			}
+			rrs.get(i).add(rr);
+		}
 		invalidateIndex();
 	}
 
