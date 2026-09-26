@@ -13,7 +13,7 @@ The intent of this DNS code is to support a large number of domains with very li
  +  Support Dynamic DNS (DDNS) with trivial configuration
  +  Zone file record types: SOA, NS, A, AAAA, CNAME, PTR, MX, TXT, SPF, HINFO, SRV, CAA, HTTPS, SVCB (other types are passed through unchanged when resolving)
 
-Not supported: zone transfers (AXFR/IXFR get REFUSED), RFC 2136 UPDATE and NOTIFY (NOTIMP; dynamic records are managed through the admin port), DNSSEC, and the `$GENERATE` zone file directive.
+Not supported: incremental zone transfer (IXFR is answered with the whole zone), acting as a secondary (incoming NOTIFY gets NOTIMP), RFC 2136 UPDATE (NOTIMP; dynamic records are managed through the admin port), TSIG, DNSSEC, and the `$GENERATE` zone file directive.
 
 # Zone files
 
@@ -91,6 +91,10 @@ A bind address of `localhost` means this host's own name (its network address), 
 | `JDns.adminTls` | false | TLS on the admin port, using the standard `javax.net.ssl.keyStore` / `keyStorePassword` properties (client: `javax.net.ssl.trustStore`). `DnsAdminClient` reads the same property. Recommended when `JDns.adminBindAddress` is not loopback: the challenge-response protects the secret, not the session |
 | `JDns.adminMaxConnections` | 8 | Admin sessions at once |
 | `JDns.adminIdleTimeout` | 600000 | Idle admin sessions are closed after this many ms |
+| `JDns.axfrAllow` | none | Addresses / networks allowed to transfer zones over TCP (AXFR, RFC 5936), e.g. `192.0.2.2, 10.0.0.0/8, 2001:db8::/32`. Everyone else gets REFUSED. There is no TSIG, so this list is the only protection |
+| `JDns.notify` | none | Secondaries to send NOTIFY (RFC 1996) to when a zone is loaded or its SOA serial changes, e.g. `192.0.2.2, [2001:db8::2]:53`. Bump the serial when you edit a zone. Dynamic entries don't change the serial, so secondaries only see them at their next transfer |
+| `JDns.notifyRetries` | 5 | Attempts per NOTIFY |
+| `JDns.notifyTimeout` | 2000 | First wait (ms) for a NOTIFY answer, doubled after each attempt |
 | `JDns.adminMaxLine` | 8192 | Longest admin command line in bytes; a longer line ends the session |
 | `JDns.adminAuthTimeout` | 30000 | With `JDns.adminSecret` set, a session that hasn't authenticated after this many ms is closed |
 | `JDns.useDataBase` | only if `JDns.jdbcURL` is set | Use the database for common domains and dynamic records |

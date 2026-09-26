@@ -140,6 +140,14 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	public static final String PROP_DNS_DIR = "JDns.dnsDir";
 	public static final String PROP_DYNAMIC = "JDns.dynamicFileName";
 	public static final String PROP_ZONE_DIR = "JDns.zone.dir";
+	/** Addresses / networks allowed to transfer zones (AXFR), e.g. "192.0.2.2, 10.0.0.0/8". Default: none. */
+	public static final String PROP_AXFR_ALLOW = "JDns.axfrAllow";
+	/** Secondaries to send NOTIFY to when a zone is loaded or its serial changes, e.g. "192.0.2.2, [2001:db8::2]:53". */
+	public static final String PROP_NOTIFY = "JDns.notify";
+	/** Attempts per NOTIFY (default 5). */
+	public static final String PROP_NOTIFY_RETRIES = "JDns.notifyRetries";
+	/** First wait (ms) for a NOTIFY answer, doubled after each attempt (default 2000). */
+	public static final String PROP_NOTIFY_TIMEOUT = "JDns.notifyTimeout";
 	public static final String PROP_USE_BATABASE = "JDns.useDataBase";
 
 	public static final String STATUS_ACTIVE = "active";
@@ -225,6 +233,11 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 * change replaces the entry (see putDynamic).
 	 */
 	private final Map<String, List<A>> dynamic = new ConcurrentHashMap<String, List<A>>();
+	//  Zone transfer allow-list (JDns.axfrAllow) and NOTIFY sender (JDns.notify)
+	private volatile AddressMatcher axfrAllow = AddressMatcher.NONE;
+	private volatile ZoneNotifier notifier;
+	/** Largest message of a zone transfer (a transfer is several messages). */
+	static final int AXFR_MESSAGE_SIZE = 16*1024;
 	//  Serializes check-then-act updates of dynamic entries
 	private final Object dynamicLock = new Object();
 
@@ -749,6 +762,29 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		adminAuthTimeout = ms;
 	}
 
+	/** Who may transfer zones (initServer reads JDns.axfrAllow). */
+	public void setAxfrAllow(String list) {
+		axfrAllow = AddressMatcher.parse(list);
+		if( !axfrAllow.isEmpty() ) {
+			log("Zone transfers allowed for "+axfrAllow);
+		}
+	}
+
+	/** Where to send NOTIFY (initServer reads JDns.notify); null or empty: nowhere. */
+	public void setNotifyTargets(String list, int retries, int timeoutMs) {
+		ZoneNotifier old = notifier;
+		ZoneNotifier n = new ZoneNotifier(list, retries, timeoutMs);
+		notifier = n.getTargets().isEmpty() ? null : n;
+		if( old != null ) {
+			old.shutdown();
+		}
+	}
+
+	/** The NOTIFY sender, or null if JDns.notify is not set. */
+	public ZoneNotifier getNotifier() {
+		return notifier;
+	}
+
 	/** Set the most admin sessions at once (initServer reads JDns.adminMaxConnections). */
 	void setAdminMaxConnections(int max) {
 		adminSlots = new java.util.concurrent.Semaphore(Math.max(1, max));
@@ -789,6 +825,14 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 */
 	private void initFromProperties() {
 		String tmp = null;
+		try {
+			setAxfrAllow(stringProperty(PROP_AXFR_ALLOW));
+			setNotifyTargets(stringProperty(PROP_NOTIFY),
+					intProperty(PROP_NOTIFY_RETRIES, ZoneNotifier.DEFAULT_RETRIES),
+					intProperty(PROP_NOTIFY_TIMEOUT, ZoneNotifier.DEFAULT_TIMEOUT));
+		} catch(IOException ex) {
+			throw new IllegalArgumentException(ex);
+		}
 		if( (tmp=getProperty(PROP_DEBUG)) != null) {
 			_debug = tmp.toLowerCase().equals("true");
 		}
@@ -1318,6 +1362,17 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 			//  Publish everything at once
 			zoneSet = new ZoneSet(Collections.unmodifiableMap(zones), def, Collections.unmodifiableMap(byFile));
+
+			//  NOTIFY secondaries about new zones and changed serials (RFC 1996)
+			ZoneNotifier n = notifier;
+			if( n != null ) {
+				for(Zone z : zones.values()) {
+					Zone before = old.zones.get(z.getName().toLowerCase());
+					if( before == null || before.getSoa().getSerial() != z.getSoa().getSerial() ) {
+						n.notifyZone(z);
+					}
+				}
+			}
 		} finally {
 			//  Remember what we looked at, even on failure, so we only try again when something changes
 			lastSeenZoneFiles = seen;
@@ -1413,10 +1468,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				retMsg.setMessageTypeResponse();
 				retMsg.setQuestion(s);
 				if( s.getType() == DNS.AXFR || s.getType() == DNS.IXFR ) {
-					//  Zone transfers are not supported: say so (REFUSED, as
-					//  RFC 5936 4.2 suggests) instead of an empty NOERROR answer.
-					retMsg.setResponseCodeRefused();
-					ret.add(retMsg);
+					ret.addAll(zoneTransfer(req, s, retMsg));
 					continue;
 				}
 				retMsg = step2(req,retMsg);
@@ -2108,6 +2160,93 @@ public class DnsServer  extends DnsBaseClass implements Runnable
       useful to the additional section of the query.  Exit.
 	 */
 
+	/**
+	 * A zone transfer (AXFR, RFC 5936; IXFR is answered with the whole zone,
+	 * as RFC 1995 4 allows). Only for clients in JDns.axfrAllow, only over TCP,
+	 * and only for the name of a zone we serve; otherwise REFUSED.
+	 * <p>
+	 * The answer is the SOA, every record of the zone (dynamic entries
+	 * replace the zone's records at their name, as in normal answers), and the
+	 * SOA again, split over as many messages as needed.
+	 * An IXFR over UDP gets only the SOA, which tells the client to use TCP
+	 * (or that it is up to date).
+	 * 
+	 * @param empty a NOERROR response with the question, used for the first message
+	 */
+	List<Message> zoneTransfer(QueryData req, Section question, Message empty) {
+		List<Message> ret = new ArrayList<Message>();
+		Zone zone = getZone(question.getName());
+		boolean tcp = req.getPort() < 0;
+		boolean allowed = axfrAllow.matches(req.getClient());
+		if( zone == null || !allowed || (!tcp && question.getType() == DNS.AXFR) ) {
+			final String why = zone == null ? "not our zone" : !allowed ? "client not in "+PROP_AXFR_ALLOW : "AXFR over UDP";
+			log(() -> "Zone transfer of "+question.getName()+" for "+req.getClient()+" refused: "+why);
+			empty.setResponseCodeRefused();
+			ret.add(empty);
+			return ret;
+		}
+		empty.setAuthorityAnswerOn();
+		Soa soa = zone.getSoa();
+		if( !tcp ) {
+			//  IXFR over UDP
+			empty.addAnswer(soa.copy());
+			ret.add(empty);
+			return ret;
+		}
+
+		List<RR> records = new ArrayList<RR>();
+		records.add(soa.copy());
+		java.util.Set<String> dynNames = new java.util.HashSet<String>();
+		for(Map.Entry<String, List<A>> e : dynamic.entrySet()) {
+			if( getZoneFor(new Name(e.getKey())) == zone ) {
+				dynNames.add(e.getKey());
+				records.addAll(e.getValue());
+			}
+		}
+		List<Name> names = zone.getNames();
+		List<List<RR>> rrs = zone.getRrs();
+		for(int i=0; i < names.size() && i < rrs.size(); i++ ) {
+			if( dynNames.contains(names.get(i).toString().toLowerCase()) ) {
+				continue;
+			}
+			for(RR rr : rrs.get(i)) {
+				if( rr.getType() != DNS.SOA ) {
+					records.add(rr);
+				}
+			}
+		}
+		records.add(soa.copy());
+
+		Message cur = empty;
+		int size = Header.LEN + question.size();
+		for(RR rr : records) {
+			int rrSize = estimateSize(rr);
+			if( size + rrSize > AXFR_MESSAGE_SIZE && cur.getAnswerCount() > 0 ) {
+				ret.add(cur);
+				cur = new Message();
+				cur.setHeader(empty.getHeader().copy());
+				cur.setMessageTypeResponse();
+				cur.setAuthorityAnswerOn();
+				cur.setResponseCodeNoError();
+				size = Header.LEN;
+			}
+			cur.addAnswer(rr);
+			size += rrSize;
+		}
+		ret.add(cur);
+		final int n = records.size();
+		final int m = ret.size();
+		log(() -> "Zone transfer of "+zone.getName()+" (serial "+Integer.toUnsignedString(soa.getSerial())+") to "+req.getClient()+": "+n+" records in "+m+" messages");
+		return ret;
+	}
+
+	/** Upper bound of a record's size on the wire (without name compression). */
+	private static int estimateSize(RR rr) {
+		Message m = new Message();
+		m.addAnswer(rr);
+		return m.toByteArray().length - Header.LEN;
+	}
+
 	/** Most SVCB/HTTPS AliasMode records followed for the additional section. */
 	static final int MAX_SVCB_ALIAS_CHAIN = 8;
 
@@ -2331,6 +2470,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		stop();
 		closeDbConnection();
 		closeListeners();
+		ZoneNotifier n = notifier;
+		if( n != null ) {
+			n.shutdown();
+		}
 		long remaining = deadline - System.currentTimeMillis();
 		boolean ret = TCPProsessor.shutdownConnections(Math.max(1, remaining));
 		for(Thread w : workers) {
