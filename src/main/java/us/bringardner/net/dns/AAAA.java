@@ -70,7 +70,7 @@ public class AAAA extends RR {
 	}
 
 	/**
-		Construct an 'A' Resource record from another resorce record (It sould be an 'A' record)
+		Construct an 'AAAA' Resource record from another resource record (It should be an 'AAAA' record)
 	 **/
 	public AAAA(RR rr) {
 		super(rr);
