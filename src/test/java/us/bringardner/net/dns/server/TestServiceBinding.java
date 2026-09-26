@@ -69,11 +69,25 @@ public class TestServiceBinding {
 					+"\t\tHTTPS\t1 . alpn=h2,h3 ipv4hint=192.0.2.1,192.0.2.2 ipv6hint=2001:db8::1 port=8443\n"
 					+"ns1\tIN\tA\t10.0.0.53\n"
 					+"www\tIN\tHTTPS\t0 cdn.example.net.\n"
-					+"_8443._foo\tIN\tSVCB\t2 svc mandatory=alpn alpn=foo no-default-alpn key65000=\"hi there\" ech=AQID\n");
+					+"_8443._foo\tIN\tSVCB\t2 svc mandatory=alpn alpn=foo no-default-alpn key65000=\"hi there\" ech=AQID\n"
+					//  For the additional section tests
+					+"@\tIN\tA\t10.0.0.1\n"
+					+"@\tIN\tAAAA\t2001:db8::10\n"
+					+"app\tIN\tHTTPS\t1 svc2 alpn=h2\n"
+					+"svc2\tIN\tA\t10.0.0.2\n"
+					+"svc2\tIN\tA\t10.0.0.3\n"
+					+"svc2\tIN\tAAAA\t2001:db8::2\n"
+					+"alias\tIN\tHTTPS\t0 app\n"
+					+"loop1\tIN\tHTTPS\t0 loop2\n"
+					+"loop2\tIN\tHTTPS\t0 loop1\n"
+					+"gone\tIN\tHTTPS\t0 .\n"
+					+"dynsvc\tIN\tHTTPS\t1 dyn\n"
+					+"dyn\tIN\tA\t10.0.0.99\n");
 		}
 		server = new DnsServer();
 		server.addZone(new Zone(zone));
 		server.setRecursionAvailable(false);
+		server.addDynamic("dyn.svc.test", "10.9.9.9");
 	}
 
 	@AfterAll
@@ -262,5 +276,61 @@ public class TestServiceBinding {
 		for(String h : new String[] {"0001 00 0003 0002 20fb 0001 0003 026832", "0001 00 0001 0009 026832"}) {
 			assertThrows(DnsFormatException.class, () -> new Message(new ByteBuffer(wireAnswer(DNS.HTTPS, hex(h)))).getAnswer().get(0), h);
 		}
+	}
+
+	// ------------------------------------------------------------ additional section (RFC 9460 4.2)
+
+	/** "name type rdata" of each additional record, sorted. */
+	private static List<String> additional(Message m) {
+		List<String> ret = new java.util.ArrayList<String>();
+		for(RR rr : m.getAdditional()) {
+			if( rr.getType() != 41 ) {		//  not the OPT record
+				ret.add(rr.getName().toLowerCase()+" "+DNS.TYPENAMES[rr.getType()]+" "+rr.getRdataAsString());
+			}
+		}
+		java.util.Collections.sort(ret);
+		return ret;
+	}
+
+	@Test
+	public void serviceModeOwnerAddressesAreAdded() {
+		//  Target "." = the owner, svc.test
+		Message m = ask("svc.test", DNS.HTTPS);
+		List<String> add = additional(m);
+		//  (at the apex the NS record's address is there too, as before)
+		add.remove("ns1.svc.test A 10.0.0.53");
+		assertEquals(Arrays.asList("svc.test A 10.0.0.1", "svc.test AAAA 2001:db8::10"), add);
+	}
+
+	@Test
+	public void serviceModeTargetAddressesAreAdded() {
+		Message m = ask("app.svc.test", DNS.HTTPS);
+		assertEquals(Arrays.asList("svc2.svc.test A 10.0.0.2", "svc2.svc.test A 10.0.0.3", "svc2.svc.test AAAA 2001:db8::2"), additional(m));
+	}
+
+	@Test
+	public void aliasModeAddsTheTargetsRecordsAndAddresses() {
+		Message m = ask("alias.svc.test", DNS.HTTPS);
+		assertEquals(1, m.getAnswerCount());
+		assertEquals(Arrays.asList("app.svc.test HTTPS 1 svc2.svc.test. alpn=h2",
+				"svc2.svc.test A 10.0.0.2", "svc2.svc.test A 10.0.0.3", "svc2.svc.test AAAA 2001:db8::2"), additional(m));
+	}
+
+	@Test
+	public void aliasLoopEnds() {
+		Message m = ask("loop1.svc.test", DNS.HTTPS);
+		assertEquals(Arrays.asList("loop2.svc.test HTTPS 0 loop1.svc.test."), additional(m));
+	}
+
+	@Test
+	public void nothingAddedForOtherTargets() {
+		assertEquals(0, additional(ask("www.svc.test", DNS.HTTPS)).size(), "target outside our zones");
+		assertEquals(0, additional(ask("gone.svc.test", DNS.HTTPS)).size(), "AliasMode '.': no service");
+		assertEquals(0, additional(ask("svc2.svc.test", DNS.A)).size(), "only for SVCB/HTTPS answers");
+	}
+
+	@Test
+	public void dynamicAddressWins() {
+		assertEquals(Arrays.asList("dyn.svc.test A 10.9.9.9"), additional(ask("dynsvc.svc.test", DNS.HTTPS)));
 	}
 }

@@ -71,6 +71,7 @@ import us.bringardner.net.dns.Name;
 import us.bringardner.net.dns.Ns;
 import us.bringardner.net.dns.RR;
 import us.bringardner.net.dns.Section;
+import us.bringardner.net.dns.Svcb;
 import us.bringardner.net.dns.Soa;
 import us.bringardner.net.dns.resolve.QueryData;
 import us.bringardner.net.dns.resolve.Resolver;
@@ -2107,30 +2108,112 @@ public class DnsServer  extends DnsBaseClass implements Runnable
       useful to the additional section of the query.  Exit.
 	 */
 
+	/** Most SVCB/HTTPS AliasMode records followed for the additional section. */
+	static final int MAX_SVCB_ALIAS_CHAIN = 8;
+
+	/**
+	 * Additional section processing for SVCB and HTTPS answers (RFC 9460 4.2):
+	 * for each one in the answer, add the addresses (A and AAAA) of its
+	 * target, when we are authoritative for the target, so the client does
+	 * not need another query. For AliasMode records the target's own SVCB /
+	 * HTTPS records are added too, and their targets' addresses, following at
+	 * most MAX_SVCB_ALIAS_CHAIN aliases. Nothing is added twice, and nothing
+	 * that is already in the answer.
+	 */
 	private Message step6(QueryData question, Message ret) {
+		if( ret == null || !ret.isAuthority() || ret.getAnswerCount() == 0 ) {
+			return ret;
+		}
+		java.util.Set<String> have = new java.util.HashSet<String>();
+		for(RR rr : ret.getAnswer()) {
+			have.add(rrKey(rr));
+		}
+		for(RR rr : ret.getAdditional()) {
+			have.add(rrKey(rr));
+		}
+		java.util.Set<String> visited = new java.util.HashSet<String>();
+		List<RR> answers = new ArrayList<RR>(ret.getAnswer());
+		for(RR rr : answers) {
+			if( rr instanceof Svcb ) {
+				addSvcbAdditional(ret, (Svcb)rr, have, visited, 0);
+			}
+		}
+		return ret;
+	}
 
-		//  Maybe add some referrals or add some NS records???
-
-		//List<RR> list = ret.getAnswer();
-
-		/*
-		if( list != null ) {
-			for(int i=0,sz=list.size(); i<sz; i++ ) {
-				RR rr  = (RR)list.get(i);
-				if( rr.getType() == DNS.NS) {
-					msg.addAuthority(rr);
-					Ns ns = (Ns)rr;
-					RR aa = getMatchingRR(ns.getNs(),DNS.A);
-					if( aa != null ) {
-						msg.addAdditional(aa);
-					}
+	private void addSvcbAdditional(Message ret, Svcb svcb, java.util.Set<String> have, java.util.Set<String> visited, int depth) {
+		String target = svcb.getTarget();
+		if( target.isEmpty() ) {
+			if( svcb.isAliasMode() ) {
+				//  AliasMode with "." : the service is not available (RFC 9460 2.5.1)
+				return;
+			}
+			//  ServiceMode with "." : the owner name
+			target = svcb.getName();
+		}
+		String key = target.toLowerCase()+"/"+svcb.getType();
+		if( !visited.add(key) ) {
+			return;
+		}
+		Name targetName = new Name(target);
+		Zone zone = getZoneFor(targetName);
+		if( zone == null ) {
+			return;
+		}
+		if( svcb.isAliasMode() && depth < MAX_SVCB_ALIAS_CHAIN ) {
+			for(RR rr : localRRs(zone, targetName, svcb.getType())) {
+				if( addOnce(ret, rr, have) ) {
+					addSvcbAdditional(ret, (Svcb)rr, have, visited, depth+1);
 				}
 			}
 		}
-		 */
+		List<RR> addresses = new ArrayList<RR>();
+		List<A> dyn = dynamic.get(dynamicKey(target));
+		if( dyn != null ) {
+			addresses.addAll(dyn);
+		} else {
+			addresses.addAll(localRRs(zone, targetName, DNS.A));
+		}
+		addresses.addAll(localRRs(zone, targetName, DNS.AAAA));
+		for(RR rr : addresses) {
+			addOnce(ret, rr, have);
+		}
+	}
 
+	/** Copies of the records of a type at a name in a zone (wildcards expanded). */
+	private static List<RR> localRRs(Zone zone, Name name, int type) {
+		List<RR> ret = new ArrayList<RR>();
+		List<RR> list = zone.getMatchingRRs(name);
+		if( list != null ) {
+			for(RR rr : list) {
+				if( rr.getType() == type ) {
+					RR copy = rr.copy();
+					copy.replaceWildCards(name);
+					ret.add(copy);
+				}
+			}
+		}
 		return ret;
+	}
 
+	private static boolean addOnce(Message ret, RR rr, java.util.Set<String> have) {
+		if( have.add(rrKey(rr)) ) {
+			ret.addAdditional(rr);
+			return true;
+		}
+		return false;
+	}
+
+	/** Name, type and rdata of a record, to recognise one that is already in the message. */
+	private static String rrKey(RR rr) {
+		String data;
+		try {
+			data = rr.getRdataAsString();
+		} catch(RuntimeException ex) {
+			byte [] r = rr.getRdata();
+			data = r == null ? "" : java.util.Arrays.toString(r);
+		}
+		return new Name(rr.getName()).toString().toLowerCase()+"/"+rr.getType()+"/"+data;
 	}
 
 	/** @return a snapshot copy of the dynamic entries (lower case name -> [A]) */
