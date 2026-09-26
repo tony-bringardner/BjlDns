@@ -38,6 +38,7 @@ import us.bringardner.net.dns.DNS;
 import us.bringardner.net.dns.DnsFormatException;
 import us.bringardner.net.dns.Edns;
 import us.bringardner.net.dns.Message;
+import us.bringardner.net.dns.Tsig;
 import us.bringardner.net.dns.resolve.QueryData;
 /**
  * 
@@ -186,13 +187,15 @@ public void run ()
 				port = recPckt.getPort();
 				
 				//  Parse only the bytes received, not the rest of the 2K buffer
-				buf = new ByteBuffer(java.util.Arrays.copyOf(recPckt.getData(), recPckt.getLength()));
+				byte [] wire = java.util.Arrays.copyOf(recPckt.getData(), recPckt.getLength());
+				buf = new ByteBuffer(wire);
 				if ( debug ) {
 					buf.dump();
 				}
 				Message msg = new Message(buf);
 				setState("Running before process");
 				QueryData query = new QueryData(client,port,msg);
+				query.setWire(wire);
 				if( msg.getQuestionCount()>0) {
 					process(query);
 				}
@@ -270,7 +273,11 @@ public void sendResponse(Message msg)
 	if( msg != null ) {
 		//  Fit the response into maxResponseSize (drops additional records,
 		//  or sets TC so the client retries over TCP)
-		byte [] data = msg.toByteArray(udpLimit(currentEdns));
+		Tsig.Session tsig = currentTsig;
+		byte [] data = msg.toByteArray(udpLimit(currentEdns) - (tsig == null ? 0 : tsig.reserve()));
+		if( tsig != null ) {
+			data = tsig.signResponse(data);
+		}
 		int dataSize = data.length;
 		setState("SendResponse getPacket");
 		DatagramPacket pckt = new DatagramPacket(data,dataSize,client,port);

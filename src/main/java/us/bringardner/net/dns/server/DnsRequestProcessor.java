@@ -39,6 +39,8 @@ public abstract class DnsRequestProcessor  extends DnsBaseClass implements DNS
 	DnsServer server;
 	//  EDNS of the request being processed (process() runs one at a time per processor)
 	protected Edns.Request currentEdns = Edns.Request.NONE;
+	//  TSIG of the request being processed (null if it was not signed): sendResponse signs with it
+	protected volatile Tsig.Session currentTsig;
 /**
  * Process an incoming request (Search for the query then call sendResponse).
  **/
@@ -49,6 +51,50 @@ public abstract class DnsRequestProcessor  extends DnsBaseClass implements DNS
 	setState("Processing Message begin");
 	Edns.Request edns = query.getEdns();
 	currentEdns = edns;
+	currentTsig = null;
+	Tsig.Session tsig;
+	try {
+		tsig = Tsig.Session.verifyRequest(server.getTsigKeys(), query.getWire());
+	} catch(DnsFormatException ex) {
+		//  A TSIG that is not the last record, or a malformed one
+		sendResponse(Edns.formatError(query.getMessage()));
+		return;
+	}
+	if( tsig != null ) {
+		currentTsig = tsig;
+		if( tsig.getError() != Tsig.NOERROR ) {
+			//  RFC 8945 5.2: NOTAUTH, with the TSIG error in the (unsigned or,
+			//  for BADTIME, signed) TSIG of the response
+			final int err = tsig.getError();
+			log(() -> "TSIG error "+err+" for a request from "+query.getClient());
+			sendResponse(notAuth(query.getMessage()));
+			currentTsig = null;
+			return;
+		}
+		query.setTsigKey(tsig.getKey().getName());
+	}
+	try {
+		answer(query, edns);
+	} finally {
+		currentTsig = null;
+	}
+	setState("Processing Message Complete");
+ }
+
+ /** A NOTAUTH response to a request (its question, no records). */
+ static Message notAuth(Message req) {
+	Message ret = new Message();
+	Header h = req.getHeader().copy();
+	ret.setHeader(h);
+	ret.setMessageTypeResponse();
+	for(Section s : req.getQuestion()) {
+		ret.setQuestion(s);
+	}
+	ret.getHeader().setRCODE(Tsig.NOTAUTH);
+	return ret;
+ }
+
+ private void answer(QueryData query, Edns.Request edns) {
 	if( edns.isMalformed() ) {
 		//  RFC 6891 6.1.1: more than one OPT (or a bad one) is FORMERR
 		sendResponse(Edns.formatError(query.getMessage()));
@@ -63,7 +109,6 @@ public abstract class DnsRequestProcessor  extends DnsBaseClass implements DNS
 			}
 		}
 	}
-	setState("Processing Message Complete");
  }
 /**
  * Insert the method's description here.

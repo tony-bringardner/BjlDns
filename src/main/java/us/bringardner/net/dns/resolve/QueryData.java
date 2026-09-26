@@ -44,6 +44,9 @@ public class QueryData
 	private Message msg;
 	private Section question;
 	private volatile Edns.Request edns;
+	//  The request as received (for TSIG), and the TSIG key it was signed with
+	private byte [] wire;
+	private volatile String tsigKey;
 	
 /**
  * QueryData constructor comment.
@@ -87,6 +90,24 @@ public java.net.InetAddress getClient() {
 public Message getMessage()
 {
 	return msg;
+}
+
+/** The request bytes as received (null if not known). */
+public byte [] getWire() {
+	return wire;
+}
+
+public void setWire(byte [] wire) {
+	this.wire = wire;
+}
+
+/** Name of the TSIG key that signed the request (verified), or null if it was not signed. */
+public String getTsigKey() {
+	return tsigKey;
+}
+
+public void setTsigKey(String tsigKey) {
+	this.tsigKey = tsigKey;
 }
 /**
  * Insert the method's description here.

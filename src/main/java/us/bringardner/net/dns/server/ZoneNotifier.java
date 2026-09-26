@@ -58,6 +58,7 @@ public class ZoneNotifier extends DnsBaseClass {
 	private final List<InetSocketAddress> targets;
 	private final int retries;
 	private final int timeout;
+	private final us.bringardner.net.dns.Tsig.Key key;
 	private final ExecutorService sender = Executors.newSingleThreadExecutor(r -> {
 		Thread t = new Thread(r, "ZoneNotifier");
 		t.setDaemon(true);
@@ -71,6 +72,15 @@ public class ZoneNotifier extends DnsBaseClass {
 	 * @param targets secondaries, e.g. "192.0.2.2, 192.0.2.3:5353, [2001:db8::2]:53"
 	 */
 	public ZoneNotifier(String targets, int retries, int timeout) {
+		this(targets, retries, timeout, null);
+	}
+
+	/**
+	 * @param key TSIG key to sign the NOTIFY messages with (null: unsigned);
+	 *   the answers must then be signed with it too
+	 */
+	public ZoneNotifier(String targets, int retries, int timeout, us.bringardner.net.dns.Tsig.Key key) {
+		this.key = key;
 		this.targets = parseTargets(targets);
 		this.retries = Math.max(1, retries);
 		this.timeout = Math.max(1, timeout);
@@ -157,6 +167,11 @@ public class ZoneNotifier extends DnsBaseClass {
 	private void send(String zoneName, us.bringardner.net.dns.RR soa, InetSocketAddress target) {
 		int id = new java.security.SecureRandom().nextInt(0x10000);
 		byte [] data = notifyMessage(zoneName, soa, id).toByteArray();
+		us.bringardner.net.dns.Tsig.Session tsig = null;
+		if( key != null ) {
+			tsig = us.bringardner.net.dns.Tsig.Session.client(key);
+			data = tsig.signRequest(data);
+		}
 		int wait = timeout;
 		try(DatagramSocket sock = new DatagramSocket()) {
 			for(int attempt=1; attempt <= retries; attempt++ ) {
@@ -176,8 +191,17 @@ public class ZoneNotifier extends DnsBaseClass {
 						continue;
 					}
 					try {
-						Message r = new Message(new ByteBuffer(java.util.Arrays.copyOf(buf, p.getLength())));
+						byte [] wire = java.util.Arrays.copyOf(buf, p.getLength());
+						Message r = new Message(new ByteBuffer(wire));
 						if( r.getID() == id && !r.isQuery() && r.getHeader().getOPCODE() == DNS.NOTIFY ) {
+							if( tsig != null ) {
+								try {
+									tsig.verifyResponse(wire);
+								} catch(us.bringardner.net.dns.Tsig.TsigException ex) {
+									logError("NOTIFY answer for "+zoneName+" from "+target+" failed TSIG: "+ex.getMessage());
+									continue;
+								}
+							}
 							acknowledged.incrementAndGet();
 							log(() -> "NOTIFY for "+zoneName+" acknowledged by "+target);
 							return;

@@ -45,6 +45,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import us.bringardner.net.dns.ByteBuffer;
 import us.bringardner.net.dns.DnsFormatException;
 import us.bringardner.net.dns.Message;
+import us.bringardner.net.dns.Tsig;
 import us.bringardner.net.dns.Utility;
 import us.bringardner.net.dns.resolve.QueryData;
 
@@ -321,6 +322,7 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 						}
 						Message msg = new Message(buf);
 						QueryData query = new QueryData(client,-1,msg);
+						query.setWire(data);
 						process(query);
 					} catch(DnsFormatException ex) {
 						// Malformed message: answer FORMERR and drop the connection
@@ -372,7 +374,12 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 		public void sendResponse(Message msg) {
 			if( msg != null ) {
 				try {
-					writeMessage(sock.getOutputStream(), msg.toByteArray(MAX_TCP_MESSAGE));
+					Tsig.Session tsig = currentTsig;
+					byte [] wire = msg.toByteArray(MAX_TCP_MESSAGE - (tsig == null ? 0 : tsig.reserve()));
+					if( tsig != null ) {
+						wire = tsig.signResponse(wire);
+					}
+					writeMessage(sock.getOutputStream(), wire);
 					if( UDPProsessor.dumpBuf != null ) {
 						UDPProsessor.dumpBuf.println("TCP("+sock+")->"+msg.toSmallString());
 					}

@@ -71,6 +71,7 @@ import us.bringardner.net.dns.RR;
 import us.bringardner.net.dns.Section;
 import us.bringardner.net.dns.Soa;
 import us.bringardner.net.dns.Svcb;
+import us.bringardner.net.dns.Tsig;
 import us.bringardner.net.dns.resolve.QueryData;
 import us.bringardner.net.dns.resolve.Resolver;
 
@@ -142,6 +143,14 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	public static final String PROP_AXFR_ALLOW = "JDns.axfrAllow";
 	/** Secondaries to send NOTIFY to when a zone is loaded or its serial changes, e.g. "192.0.2.2, [2001:db8::2]:53". */
 	public static final String PROP_NOTIFY = "JDns.notify";
+	/** TSIG keys (RFC 8945): "name:algorithm:base64secret" entries, e.g. "xfr.example:hmac-sha256:c2VjcmV0..." */
+	public static final String PROP_TSIG_KEYS = "JDns.tsigKeys";
+	/** A file of TSIG keys, one "name algorithm base64secret" per line (keeps secrets out of the properties). */
+	public static final String PROP_TSIG_KEY_FILE = "JDns.tsigKeyFile";
+	/** TSIG keys (names) whose signed requests may transfer zones, from any address. */
+	public static final String PROP_AXFR_KEYS = "JDns.axfrKeys";
+	/** TSIG key (name) to sign NOTIFY messages with. */
+	public static final String PROP_NOTIFY_KEY = "JDns.notifyKey";
 	/** Attempts per NOTIFY (default 5). */
 	public static final String PROP_NOTIFY_RETRIES = "JDns.notifyRetries";
 	/** First wait (ms) for a NOTIFY answer, doubled after each attempt (default 2000). */
@@ -233,6 +242,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	private final Map<String, List<A>> dynamic = new ConcurrentHashMap<String, List<A>>();
 	//  Zone transfer allow-list (JDns.axfrAllow) and NOTIFY sender (JDns.notify)
 	private volatile AddressMatcher axfrAllow = AddressMatcher.NONE;
+	private volatile Tsig.KeyRing tsigKeys = Tsig.KeyRing.EMPTY;
+	private volatile java.util.Set<String> axfrKeys = Collections.emptySet();
 	private volatile ZoneNotifier notifier;
 	/** Largest message of a zone transfer (a transfer is several messages). */
 	static final int AXFR_MESSAGE_SIZE = 16*1024;
@@ -760,6 +771,43 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		adminAuthTimeout = ms;
 	}
 
+	//  JDns.notifyKey (applied by setNotifyTargets)
+	private volatile String notifyKeyName;
+
+	/** The TSIG keys (initServer reads JDns.tsigKeys and JDns.tsigKeyFile). */
+	public Tsig.KeyRing getTsigKeys() {
+		return tsigKeys;
+	}
+
+	public void setTsigKeys(Tsig.KeyRing keys) {
+		tsigKeys = keys == null ? Tsig.KeyRing.EMPTY : keys;
+		if( !tsigKeys.isEmpty() ) {
+			log("TSIG keys: "+tsigKeys.size());
+		}
+	}
+
+	/** TSIG keys whose signed requests may transfer zones (initServer reads JDns.axfrKeys). */
+	public void setAxfrKeys(String list) {
+		java.util.Set<String> ret = new java.util.HashSet<String>();
+		if( list != null ) {
+			for(String k : list.trim().split("[,\\s]+")) {
+				if( !k.isEmpty() ) {
+					Tsig.Key key = tsigKeys.get(k);
+					if( key == null ) {
+						throw new IllegalArgumentException(PROP_AXFR_KEYS+" names an unknown TSIG key: "+k);
+					}
+					ret.add(key.getName());
+				}
+			}
+		}
+		axfrKeys = Collections.unmodifiableSet(ret);
+	}
+
+	/** The TSIG key to sign NOTIFY with (set before setNotifyTargets). */
+	public void setNotifyKey(String name) {
+		notifyKeyName = name;
+	}
+
 	/** Who may transfer zones (initServer reads JDns.axfrAllow). */
 	public void setAxfrAllow(String list) {
 		axfrAllow = AddressMatcher.parse(list);
@@ -771,7 +819,15 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	/** Where to send NOTIFY (initServer reads JDns.notify); null or empty: nowhere. */
 	public void setNotifyTargets(String list, int retries, int timeoutMs) {
 		ZoneNotifier old = notifier;
-		ZoneNotifier n = new ZoneNotifier(list, retries, timeoutMs);
+		Tsig.Key key = null;
+		String kn = notifyKeyName;
+		if( kn != null && !kn.trim().isEmpty() ) {
+			key = tsigKeys.get(kn.trim());
+			if( key == null ) {
+				throw new IllegalArgumentException(PROP_NOTIFY_KEY+" names an unknown TSIG key: "+kn);
+			}
+		}
+		ZoneNotifier n = new ZoneNotifier(list, retries, timeoutMs, key);
 		notifier = n.getTargets().isEmpty() ? null : n;
 		if( old != null ) {
 			old.shutdown();
@@ -824,7 +880,20 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	private void initFromProperties() {
 		String tmp = null;
 		try {
+			Tsig.KeyRing keys = Tsig.KeyRing.parse(stringProperty(PROP_TSIG_KEYS));
+			String keyFile = stringProperty(PROP_TSIG_KEY_FILE);
+			if( keyFile != null ) {
+				File f = new File(keyFile);
+				if( !f.isAbsolute() ) {
+					//  Relative to JDns.dnsDir, like the other files
+					f = new File(getProperty(PROP_DNS_DIR,DEFAULT_DNS_DIR), keyFile);
+				}
+				keys = keys.with(Tsig.KeyRing.load(f));
+			}
+			setTsigKeys(keys);
+			setAxfrKeys(stringProperty(PROP_AXFR_KEYS));
 			setAxfrAllow(stringProperty(PROP_AXFR_ALLOW));
+			notifyKeyName = stringProperty(PROP_NOTIFY_KEY);
 			setNotifyTargets(stringProperty(PROP_NOTIFY),
 					intProperty(PROP_NOTIFY_RETRIES, ZoneNotifier.DEFAULT_RETRIES),
 					intProperty(PROP_NOTIFY_TIMEOUT, ZoneNotifier.DEFAULT_TIMEOUT));
@@ -2160,7 +2229,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 	/**
 	 * A zone transfer (AXFR, RFC 5936; IXFR is answered with the whole zone,
-	 * as RFC 1995 4 allows). Only for clients in JDns.axfrAllow, only over TCP,
+	 * as RFC 1995 4 allows). Only for clients in JDns.axfrAllow or requests
+	 * signed with a TSIG key in JDns.axfrKeys, only over TCP,
 	 * and only for the name of a zone we serve; otherwise REFUSED.
 	 * <p>
 	 * The answer is the SOA, every record of the zone (dynamic entries
@@ -2175,9 +2245,11 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		List<Message> ret = new ArrayList<Message>();
 		Zone zone = getZone(question.getName());
 		boolean tcp = req.getPort() < 0;
-		boolean allowed = axfrAllow.matches(req.getClient());
+		//  By address (JDns.axfrAllow) or by TSIG key (JDns.axfrKeys, from anywhere)
+		String key = req.getTsigKey();
+		boolean allowed = axfrAllow.matches(req.getClient()) || (key != null && axfrKeys.contains(key));
 		if( zone == null || !allowed || (!tcp && question.getType() == DNS.AXFR) ) {
-			final String why = zone == null ? "not our zone" : !allowed ? "client not in "+PROP_AXFR_ALLOW : "AXFR over UDP";
+			final String why = zone == null ? "not our zone" : !allowed ? "client not in "+PROP_AXFR_ALLOW+" and not signed with a key in "+PROP_AXFR_KEYS : "AXFR over UDP";
 			log(() -> "Zone transfer of "+question.getName()+" for "+req.getClient()+" refused: "+why);
 			empty.setResponseCodeRefused();
 			ret.add(empty);
