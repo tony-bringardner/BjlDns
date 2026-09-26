@@ -2416,7 +2416,11 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			//  servers send a signed zone; some tools expect it)
 			RR first = records.get(0);
 			List<RR> rest = new ArrayList<RR>(records.subList(1, records.size()));
-			rest.sort((x, y) -> Canonical.compareNames(x.getName(), y.getName()));
+			Map<RR, String> keys = new java.util.IdentityHashMap<RR, String>();
+			for(RR rr : rest) {
+				keys.put(rr, Canonical.sortKey(rr.getName()));
+			}
+			rest.sort((x, y) -> keys.get(x).compareTo(keys.get(y)));
 			records.clear();
 			records.add(first);
 			records.addAll(rest);

@@ -42,6 +42,7 @@ public final class SignedZone {
 	final Zone unsigned;
 	final String apex;
 	private final Map<String, List<Rrsig>> sigs;
+	//  sort key (Canonical.sortKey) -> NSEC, so lookups compare plain strings
 	private final NavigableMap<String, Nsec> chain;
 	/** When it was signed and when the first signature expires (seconds since 1970). */
 	final long signedAt;
@@ -59,7 +60,11 @@ public final class SignedZone {
 		this.unsigned = unsigned;
 		this.apex = apex;
 		this.sigs = sigs;
-		this.chain = chain;
+		java.util.TreeMap<String, Nsec> byKey = new java.util.TreeMap<String, Nsec>();
+		for(Map.Entry<String, Nsec> e : chain.entrySet()) {
+			byKey.put(Canonical.sortKey(e.getKey()), e.getValue());
+		}
+		this.chain = byKey;
 		this.signedAt = signedAt;
 		this.expires = expires;
 		this.refreshAt = refreshAt;
@@ -93,12 +98,12 @@ public final class SignedZone {
 
 	/** The NSEC at exactly this name, or null. */
 	public Nsec nsecAt(String name) {
-		return chain.get(Canonical.key(name));
+		return chain.get(Canonical.sortKey(name));
 	}
 
 	/** @return true if the name owns records (has an NSEC) */
 	public boolean exists(String name) {
-		return chain.containsKey(Canonical.key(name));
+		return chain.containsKey(Canonical.sortKey(name));
 	}
 
 	/**
@@ -107,8 +112,7 @@ public final class SignedZone {
 	 * whose next name is the apex, covers everything after it).
 	 */
 	public Nsec covering(String name) {
-		String n = Canonical.key(name);
-		Map.Entry<String, Nsec> e = chain.lowerEntry(n);
+		Map.Entry<String, Nsec> e = chain.lowerEntry(Canonical.sortKey(name));
 		if( e == null ) {
 			e = chain.lastEntry();
 		}
@@ -120,12 +124,16 @@ public final class SignedZone {
 	 * empty non-terminal, RFC 8020): it exists, so the answer is NODATA.
 	 */
 	public boolean isEmptyNonTerminal(String name) {
-		String n = Canonical.key(name);
-		if( chain.containsKey(n) ) {
+		return isEnt(Canonical.sortKey(name));
+	}
+
+	private boolean isEnt(String key) {
+		if( chain.containsKey(key) ) {
 			return false;
 		}
-		String next = chain.higherKey(n);
-		return next != null && Canonical.isBelow(next, n, false);
+		//  The next name in order is below this one
+		String next = chain.higherKey(key);
+		return next != null && next.startsWith(key);
 	}
 
 	/**
@@ -144,7 +152,8 @@ public final class SignedZone {
 			if( !Canonical.isBelow(n, apex, true) ) {
 				return apex;
 			}
-			if( n.equals(apex) || chain.containsKey(n) || isEmptyNonTerminal(n) ) {
+			String k = Canonical.sortKey(n);
+			if( n.equals(apex) || chain.containsKey(k) || isEnt(k) ) {
 				return n;
 			}
 		}

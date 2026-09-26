@@ -88,6 +88,21 @@ public final class Canonical {
 		return Integer.compare(x.length, y.length);
 	}
 
+	/**
+	 * A key whose natural String order is canonical name order: the lower
+	 * case labels from the right, each followed by a zero char (which sorts
+	 * before any label octet, so a shorter label and an ancestor come first).
+	 * Comparing keys is much cheaper than {@link #compareNames}.
+	 */
+	public static String sortKey(String name) {
+		String [] l = labels(name);
+		StringBuilder b = new StringBuilder(name.length()+2);
+		for(int i=l.length-1; i >= 0; i-- ) {
+			b.append(l[i]).append('\0');
+		}
+		return b.toString();
+	}
+
 	/** Canonical name order as a Comparator. */
 	public static final Comparator<String> NAME_ORDER = Canonical::compareNames;
 
