@@ -300,13 +300,15 @@ public class Zone implements DNS {
 			//  loading quadratic)
 			java.util.Map<String,Integer> exact = exactIndex;
 			List<Integer> wild = wildIndex;
-			if( exact != null && wild != null ) {
+			java.util.Set<String> anc = ancestorIndex;
+			if( exact != null && wild != null && anc != null ) {
 				int i = names.size()-1;
 				if( name.hasWildCard() ) {
 					wild.add(i);
 				} else {
 					exact.putIfAbsent(indexKey(name), i);
 				}
+				addAncestors(anc, indexKey(name));
 			}
 		}
 
@@ -347,6 +349,21 @@ public class Zone implements DNS {
 	//  lower-case exact name -> position of its first entry; positions of wildcard names in order
 	private volatile java.util.Map<String,Integer> exactIndex;
 	private volatile List<Integer> wildIndex;
+	//  Every proper ancestor (lower case) of the names without a '*': the
+	//  names that have names below them (see hasNamesBelow)
+	private volatile java.util.Set<String> ancestorIndex;
+
+	private static void addAncestors(java.util.Set<String> anc, String key) {
+		if( key.indexOf('*') >= 0 ) {
+			return;
+		}
+		for(int dot = key.indexOf('.'); dot >= 0; dot = key.indexOf('.', dot+1) ) {
+			if( !anc.add(key.substring(dot+1)) ) {
+				//  its ancestors are there already
+				break;
+			}
+		}
+	}
 
 	private static String indexKey(Name n) {
 		return n.toString().toLowerCase(java.util.Locale.ROOT);
@@ -356,14 +373,18 @@ public class Zone implements DNS {
 	private synchronized void buildIndex() {
 		java.util.Map<String,Integer> exact = new java.util.HashMap<String,Integer>();
 		List<Integer> wild = new ArrayList<Integer>();
+		java.util.Set<String> anc = java.util.concurrent.ConcurrentHashMap.newKeySet();
 		for(int i=0,sz=names.size(); i< sz; i++ ) {
 			Name n = names.get(i);
+			String key = indexKey(n);
 			if( n.hasWildCard() ) {
 				wild.add(i);
 			} else {
-				exact.putIfAbsent(indexKey(n), i);
+				exact.putIfAbsent(key, i);
 			}
+			addAncestors(anc, key);
 		}
+		ancestorIndex = anc;
 		wildIndex = wild;
 		exactIndex = exact;
 	}
@@ -371,6 +392,7 @@ public class Zone implements DNS {
 	private void invalidateIndex() {
 		exactIndex = null;
 		wildIndex = null;
+		ancestorIndex = null;
 	}
 
 	/**
@@ -1273,6 +1295,18 @@ public class Zone implements DNS {
 	 * own, so it must get NODATA, not NXDOMAIN (RFC 8020).
 	 */
 	public boolean hasNamesBelow(String name) {
+		//  A set lookup: it used to compare the name with every name in the
+		//  zone, which made NXDOMAIN answers ~50 times slower than the others
+		java.util.Set<String> anc = ancestorIndex;
+		if( anc == null ) {
+			buildIndex();
+			anc = ancestorIndex;
+		}
+		return anc.contains(name.toLowerCase());
+	}
+
+	/** For tests: the original scan behind hasNamesBelow. */
+	boolean linearHasNamesBelow(String name) {
 		String suffix = "."+name.toLowerCase();
 		for(Name n : names) {
 			String s = n.toString().toLowerCase();

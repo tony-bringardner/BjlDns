@@ -119,6 +119,55 @@ public class TestZoneIndex {
 		assertSameAsScan(big, "*.big.test");
 	}
 
+	private static final String [] BELOW = {
+			"big.test", "test", "BIG.Test", "h1.big.test", "wild.big.test", "x.wild.big.test", "nope.big.test",
+			"b.big.test", "c.b.big.test", "d.c.b.big.test", "c.B.big.test", "foo.com", "com", "xxx.com", "*.big.test",
+			"", ".big.test", "big.test.", "ig.test", "a.b.c.d"
+	};
+
+	private static void assertBelowSameAsScan(Zone z) {
+		for(String n : BELOW) {
+			assertEquals(z.linearHasNamesBelow(n), z.hasNamesBelow(n), "'"+n+"'");
+		}
+	}
+
+	@Test
+	public void namesBelowSameAsTheScan() throws IOException {
+		//  Empty non-terminals: NODATA for them, NXDOMAIN for names that don't exist
+		assertBelowSameAsScan(big);
+		assertBelowSameAsScan(fixture);
+		assertEquals(true, big.hasNamesBelow("big.test"));
+		assertEquals(true, big.hasNamesBelow("wild.big.test"), "exact.wild is below it");
+		assertEquals(false, big.hasNamesBelow("h1.big.test"));
+		//  Kept up to date when records are added and removed
+		Zone z = big.copyForUpdate();
+		us.bringardner.net.dns.A a = new us.bringardner.net.dns.A("d.c.b.big.test");
+		a.setAddress("10.9.9.9");
+		z.addRecord(a);
+		assertBelowSameAsScan(z);
+		assertEquals(true, z.hasNamesBelow("B.big.test"));
+		z.removeRecords("d.c.b.big.test", r -> true);
+		assertBelowSameAsScan(z);
+		assertEquals(false, z.hasNamesBelow("b.big.test"));
+	}
+
+	@Test
+	public void namesBelowIsFast() {
+		//  It compared the name with every name in the zone (5000 here) per NXDOMAIN
+		long t0 = System.nanoTime();
+		for(int i=0; i < 2000; i++ ) {
+			big.linearHasNamesBelow("nope"+i+".big.test");
+		}
+		long scan = System.nanoTime()-t0;
+		t0 = System.nanoTime();
+		for(int i=0; i < 2000; i++ ) {
+			big.hasNamesBelow("nope"+i+".big.test");
+		}
+		long indexed = System.nanoTime()-t0;
+		System.out.println("5000-name zone, 2000 hasNamesBelow: scan "+(scan/1_000_000)+" ms, indexed "+(indexed/1_000_000)+" ms");
+		assertEquals(true, indexed < scan, "the set lookup should beat the scan");
+	}
+
 	@Test
 	public void fasterOnALargeZone() {
 		List<Name> queries = new ArrayList<Name>();
