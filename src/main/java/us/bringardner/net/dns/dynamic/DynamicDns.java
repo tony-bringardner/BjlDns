@@ -36,10 +36,12 @@ import us.bringardner.net.dns.DnsBaseClass;
 
 public class DynamicDns extends DnsBaseClass {
 
-	private static final String PROP_DYNAMIC_DRIVER = "DnsDriver";
-	private static final String PROP_DYNAMIC_URL = "DynUrl";
-	private static final String PROP_DYNAMIC_USER = "DynUser";
-	private static final String PROP_DYNAMIC_PASSWORD = "DynPassword";
+	//  The same database settings as the server (they used to be DnsDriver,
+	//  DynUrl, DynUser and DynPassword; those names are still read)
+	private static final String PROP_DYNAMIC_DRIVER = us.bringardner.net.dns.server.DnsServer.PROP_JDBC_CLASS;
+	private static final String PROP_DYNAMIC_URL = us.bringardner.net.dns.server.DnsServer.PROP_JDBC_URL;
+	private static final String PROP_DYNAMIC_USER = us.bringardner.net.dns.server.DnsServer.PROP_JDBC_USER;
+	private static final String PROP_DYNAMIC_PASSWORD = us.bringardner.net.dns.server.DnsServer.PROP_JDBC_PASSWORD;
 
 	public static final String STATUS_ACTIVE = "active";
 	public static final String STATUS_DELETED = "deleted";
@@ -109,10 +111,10 @@ public class DynamicDns extends DnsBaseClass {
 	}
 
 	private Connection getDynDnsConnection() throws ClassNotFoundException, SQLException {
-		String driver = System.getProperty(PROP_DYNAMIC_DRIVER,"com.mysql.cj.jdbc.Driver");  // was org.gjt.mm.mysql.Driver, removed in Connector/J 8
-		String url = System.getProperty(PROP_DYNAMIC_URL,"jdbc:mysql://mail.bringardner.us:3306/email");
-		String user = System.getProperty(PROP_DYNAMIC_USER,"tony");
-		String password = System.getProperty(PROP_DYNAMIC_PASSWORD,"0000");
+		String driver = us.bringardner.net.dns.RenamedProperty.get(PROP_DYNAMIC_DRIVER, "DnsDriver", "com.mysql.cj.jdbc.Driver");  // was org.gjt.mm.mysql.Driver, removed in Connector/J 8
+		String url = us.bringardner.net.dns.RenamedProperty.get(PROP_DYNAMIC_URL, "DynUrl", "jdbc:mysql://mail.bringardner.us:3306/email");
+		String user = us.bringardner.net.dns.RenamedProperty.get(PROP_DYNAMIC_USER, "DynUser", "tony");
+		String password = us.bringardner.net.dns.RenamedProperty.get(PROP_DYNAMIC_PASSWORD, "DynPassword", "0000");
 		Connection con = null;
 		Class.forName(driver);
 		con = DriverManager.getConnection(url, user, password);

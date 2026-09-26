@@ -95,49 +95,120 @@ WantedBy=multi-user.target
 
 ## Configuration properties
 
-Set in the properties file (`JDns.properties`) or with `-D`. Besides the existing ones (`JDns.dnsPort`, `JDns.bindAddress`, `JDns.zone.dir`, `JDns.master.zone`, ...):
+Set them in the properties file (`JDns.properties`, see below) or with `-D` on the command line; `-D` wins. Every BjlDns property starts with `JDns.`.
 
 A bind address of `localhost` means this host's own name (its network address), not the loopback interface, so the server is reachable from the network; a warning is logged. Use `127.0.0.1` to listen on loopback only.
 
+### Files and zones
+
 | Property | Default | Meaning |
 |---|---|---|
-| `JDns.udpTimeout` / `JDns.tcpTimeout` | `JDns.timeout` (5000) | Socket timeouts (ms); how often listeners check for shutdown |
-| `JDns.tcpBindAddress` / `JDns.udp.bindAddress` | `JDns.bindAddress` | Per-protocol listen address |
-| `JDns.udpMaxResponse` | 512 | Largest UDP response (bytes) to clients without EDNS; bigger answers are truncated (TC) and clients retry over TCP |
-| `JDns.zoneCutReferrals` | true | Names at or below NS records below a zone's apex (a delegation) get a referral (NS + glue, not authoritative) instead of NXDOMAIN / an authoritative answer. Set false if your zones put NS records on ordinary hosts |
-| `JDns.ednsUdpSize` | 1232 | Largest UDP response to EDNS clients (512–4096; the client's own size is used if smaller). Responses echo an OPT record; EDNS versions other than 0 get BADVERS |
+| `JDns.properties` | `JDns.properties` (current directory) | The properties file to load at startup |
+| `JDns.dnsDir` | `/data/services/dns/config` | Directory for the dynamic entries file, the TSIG key file and the root hints (`sbelt.prop`) |
+| `JDns.zone.dir` | `zones` | Directory of the zone files (`<zone>.txt`); a changed file is reloaded |
+| `JDns.master.zone` | required | The default zone: answers for the common domains (see Major Features) come from it |
+| `JDns.dynamicFileName` | `dynamic.txt` | Dynamic entries file, relative to `JDns.dnsDir` (used without a database) |
+| `JDns.debug` | true | Debug logging checks; false skips the work of building debug messages |
+| `JDns.ra` | true | Recursion available: resolve names that are not in our zones for clients that ask for it |
+| `JDns.exitOnFatalError` | true (standalone) | Halt the process on a JVM error (see above) |
+
+### Network
+
+| Property | Default | Meaning |
+|---|---|---|
+| `JDns.dnsPort` | 53 | DNS port (UDP and TCP) |
+| `JDns.bindAddress` | loopback | Listen address |
+| `JDns.udpPort` / `JDns.tcpPort` | `JDns.dnsPort` | Per-protocol port |
+| `JDns.udp.bindAddress` / `JDns.tcpBindAddress` | `JDns.bindAddress` | Per-protocol listen address |
+| `JDns.timeout` | 5000 | Socket timeout (ms) for both protocols |
+| `JDns.udpTimeout` / `JDns.tcpTimeout` | `JDns.timeout` | Per-protocol socket timeouts (ms); how often listeners check for shutdown |
+| `JDns.udpProcCount` | 10 | UDP listener threads |
+| `JDns.tcpProcCount` | 1 | TCP acceptor threads (connections are served by the pool below) |
+| `JDns.tcpBacklog` | 10 | TCP listen backlog |
 | `JDns.tcpMaxConnections` | 64 | TCP connections served at once; more are closed immediately |
 | `JDns.tcpIdleTimeout` | 10000 | An idle TCP connection is closed after this many ms |
+| `JDns.udpMaxResponse` | 512 | Largest UDP response (bytes) to clients without EDNS; bigger answers are truncated (TC) and clients retry over TCP |
+| `JDns.ednsUdpSize` | 1232 | Largest UDP response to EDNS clients (512–4096; the client's own size is used if smaller). Responses echo an OPT record; EDNS versions other than 0 get BADVERS |
+| `JDns.zoneCutReferrals` | true | Names at or below NS records below a zone's apex (a delegation) get a referral (NS + glue, not authoritative) instead of NXDOMAIN / an authoritative answer. Set false if your zones put NS records on ordinary hosts |
+| `JDns.dump.file` | none | Write every UDP request and answer to this file (debugging) |
+
+### Resolver (recursion)
+
+| Property | Default | Meaning |
+|---|---|---|
+| `JDns.resolvers` | 10 | Resolver threads |
+| `JDns.resolverMaxBacklog` | 200 | Queued recursive queries; when full, clients get SERVFAIL (a CNAME answer is sent without the target's records). Logged at most every 10 s |
+| `JDns.resolveTimeout` | 4000 | Total time (ms) for one resolution, including referrals and CNAME hops |
 | `JDns.maxCacheEntries` | 10000 | Resolver cache size (LRU) |
 | `JDns.cacheSweepSeconds` | 60 | How often expired cache entries are removed |
 | `JDns.maxCacheAge` | 1800000 | Upper bound (ms) on how long anything is cached |
 | `JDns.maxNegativeTtl` | 10800 | Upper bound (s) for caching "does not exist" answers |
 | `JDns.maxDelegations` | 10000 | Learned delegations kept (LRU) |
 | `JDns.delegationMaxAge` | 3600 | Seconds a learned delegation is used before a fresh referral replaces it |
-| `Resolver.maxBacklog` | 200 | Queued recursive queries; when full, clients get SERVFAIL (a CNAME answer is sent without the target's records). Logged at most every 10 s |
-| `TCPProcCount` | 1 | TCP acceptor threads (connections are served by the pool above) |
+
+### Admin port
+
+| Property | Default | Meaning |
+|---|---|---|
+| `JDns.adminPort` | 9999 | Admin port; `DnsAdminClient` connects to it too |
+| `JDns.adminHost` | the DNS server NsLookup finds, else localhost | Host `DnsAdminClient` connects to (a command line argument wins) |
 | `JDns.adminBindAddress` | loopback | Admin port listen address (`0.0.0.0` for all interfaces) |
 | `JDns.adminSecret` | none | Shared secret for the admin port (challenge-response). Without it only local clients are accepted. `DnsAdminClient` reads the same property |
 | `JDns.adminTls` | false | TLS on the admin port, using the standard `javax.net.ssl.keyStore` / `keyStorePassword` properties (client: `javax.net.ssl.trustStore`). `DnsAdminClient` reads the same property. Recommended when `JDns.adminBindAddress` is not loopback: the challenge-response protects the secret, not the session |
 | `JDns.adminMaxConnections` | 8 | Admin sessions at once |
 | `JDns.adminIdleTimeout` | 600000 | Idle admin sessions are closed after this many ms |
+| `JDns.adminMaxLine` | 8192 | Longest admin command line in bytes; a longer line ends the session |
+| `JDns.adminAuthTimeout` | 30000 | With `JDns.adminSecret` set, a session that hasn't authenticated after this many ms is closed |
+
+### Database
+
+| Property | Default | Meaning |
+|---|---|---|
+| `JDns.useDataBase` | only if `JDns.jdbcURL` is set | Use the database for common domains and dynamic records |
+| `JDns.jdbcURL` | none | JDBC URL of the database |
+| `JDns.jdbcClass` | none | JDBC driver class to load (not needed for JDBC 4 drivers on the class path) |
+| `JDns.jdbcUser` / `JDns.jdbcPassword` | none | Database login |
+
+The standalone `DynamicDns` class uses the same four `JDns.jdbc*` properties.
+
+### Zone transfer, TSIG, dynamic update
+
+| Property | Default | Meaning |
+|---|---|---|
 | `JDns.axfrAllow` | none | Addresses / networks allowed to transfer zones over TCP (AXFR, RFC 5936), e.g. `192.0.2.2, 10.0.0.0/8, 2001:db8::/32`. Everyone else gets REFUSED, unless the request is signed with a key in `JDns.axfrKeys` |
+| `JDns.axfrKeys` | none | TSIG key names whose signed requests may transfer zones, from any address |
 | `JDns.notify` | none | Secondaries to send NOTIFY (RFC 1996) to when a zone is loaded or its SOA serial changes, e.g. `192.0.2.2, [2001:db8::2]:53`. Bump the serial when you edit a zone. Dynamic entries don't change the serial, so secondaries only see them at their next transfer |
+| `JDns.notifyKey` | none | TSIG key to sign NOTIFY messages with; the secondary's answer must then be signed too |
+| `JDns.notifyRetries` | 5 | Attempts per NOTIFY |
+| `JDns.notifyTimeout` | 2000 | First wait (ms) for a NOTIFY answer, doubled after each attempt |
 | `JDns.tsigKeys` | none | TSIG keys (RFC 8945) as `name:algorithm:base64secret`, e.g. `xfr.example:hmac-sha256:...`. Algorithms: hmac-sha256 (recommended), hmac-sha512, hmac-sha384, hmac-sha224, hmac-sha1, hmac-md5. Generate a secret with `openssl rand -base64 32`. A request signed with a known key gets a signed response; a bad signature, an unknown key or a clock too far off (see `JDns.tsigFudge`) gets NOTAUTH and is not answered |
 | `JDns.tsigKeyFile` | none | A file of TSIG keys, one `name algorithm secret` per line (`#` comments); relative to `JDns.dnsDir`. Keeps the secrets out of the properties file |
 | `JDns.tsigFudge` | 300 | Largest clock difference (seconds, 1-65535) accepted in a signed request; also the fudge used when signing NOTIFY. The window is the smaller of this and the fudge in the request, so a client can't widen it |
-| `JDns.axfrKeys` | none | TSIG key names whose signed requests may transfer zones, from any address |
 | `JDns.updateKeys` | none | TSIG key names whose signed dynamic UPDATE requests (RFC 2136, e.g. `nsupdate -k`) may change zones |
 | `JDns.updateAllow` | none | Addresses / networks allowed to send unsigned UPDATE requests. Prefer `JDns.updateKeys` |
-| `JDns.notifyKey` | none | TSIG key to sign NOTIFY messages with; the secondary's answer must then be signed too |
+
+### DNSSEC
+
+| Property | Default | Meaning |
+|---|---|---|
 | `JDns.dnssecKeyDir` | `JDns.zone.dir` | Directory of the DNSSEC key files (`K<zone>.+<alg>+<tag>.key` and `.private`). A zone with keys there is signed |
+| `JDns.dnssecValidity` | 14d | How long DNSSEC signatures are valid (at least 1h); zones are signed again when a quarter of it is left |
 | `JDns.dnssecNsec3` | none | Zones to sign with NSEC3 instead of NSEC, e.g. `example.com, example.org`, or `*` for all |
 | `JDns.dnssecNsec3Iterations` | 0 | NSEC3 extra hash iterations (0-100; RFC 9276 recommends 0) |
 | `JDns.dnssecNsec3Salt` | - | NSEC3 salt in hex, `-` for none (RFC 9276 recommends none) |
-| `JDns.dnssecValidity` | 14d | How long DNSSEC signatures are valid (at least 1h); zones are signed again when a quarter of it is left |
-| `JDns.notifyRetries` | 5 | Attempts per NOTIFY |
-| `JDns.notifyTimeout` | 2000 | First wait (ms) for a NOTIFY answer, doubled after each attempt |
-| `JDns.adminMaxLine` | 8192 | Longest admin command line in bytes; a longer line ends the session |
-| `JDns.adminAuthTimeout` | 30000 | With `JDns.adminSecret` set, a session that hasn't authenticated after this many ms is closed |
-| `JDns.useDataBase` | only if `JDns.jdbcURL` is set | Use the database for common domains and dynamic records |
-| `JDns.exitOnFatalError` | true (standalone) | Halt the process on a JVM error (see above) |
+
+### Logging (BjlCore)
+
+Logging comes from the BjlCore library, whose property names are its own: `LogLevel` (default ERROR; e.g. DEBUG, INFO), `<logger name>.LogLevel` for one logger, `LogFile` (default: standard output) and `ILogger` (the logger class).
+
+### Renamed properties
+
+These were renamed so all names start with `JDns.`. The old names still work but log a warning; the new name wins when both are set.
+
+| Old name | New name |
+|---|---|
+| `UDPProcCount` | `JDns.udpProcCount` |
+| `TCPProcCount` | `JDns.tcpProcCount` |
+| `Resolver.maxBacklog` | `JDns.resolverMaxBacklog` |
+| `name`, `port` (DnsAdminClient) | `JDns.adminHost`, `JDns.adminPort` |
+| `DnsDriver`, `DynUrl`, `DynUser`, `DynPassword` (DynamicDns) | `JDns.jdbcClass`, `JDns.jdbcURL`, `JDns.jdbcUser`, `JDns.jdbcPassword` |

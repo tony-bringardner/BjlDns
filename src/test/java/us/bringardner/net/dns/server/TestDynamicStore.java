@@ -144,7 +144,7 @@ public class TestDynamicStore {
 	private static File zoneFile;
 	private static File dynFile;
 	private static final Map<String,String> saved = new HashMap<String,String>();
-	private static final String [] PROPS = {DnsServer.PROP_USE_BATABASE, DnsServer.PROP_JDBC_URL, DnsServer.PROP_DYNAMIC, "JDns.jdbcClass"};
+	private static final String [] PROPS = {DnsServer.PROP_USE_BATABASE, DnsServer.PROP_JDBC_URL, DnsServer.PROP_DYNAMIC, DnsServer.PROP_JDBC_CLASS};
 
 	@BeforeAll
 	public static void setup() throws Exception {
@@ -162,7 +162,7 @@ public class TestDynamicStore {
 		for(String k : PROPS) {
 			saved.put(k, System.getProperty(k));
 		}
-		System.clearProperty("JDns.jdbcClass");
+		System.clearProperty(DnsServer.PROP_JDBC_CLASS);
 		System.setProperty(DnsServer.PROP_DYNAMIC, dynFile.getAbsolutePath());
 	}
 

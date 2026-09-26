@@ -38,7 +38,7 @@ public class TestDefaults {
 
 	@Test
 	public void backlogDefault() {
-		if( System.getProperty("Resolver.maxBacklog") == null ) {
+		if( System.getProperty(ResolverThread.PROP_RESOLVER_BACKLOG) == null && System.getProperty("Resolver.maxBacklog") == null ) {
 			assertEquals(ResolverThread.DEFAULT_MAX_BACKLOG, ResolverThread.getMaxBackLog());
 			assertEquals(200, ResolverThread.getMaxBackLog(), "was 20");
 		}
@@ -56,7 +56,7 @@ public class TestDefaults {
 		ResolverThread.resetBacklogWarning();
 		String first = ResolverThread.backlogFullWarning();
 		assertNotNull(first);
-		assertTrue(first.contains("Resolver.maxBacklog"), first);
+		assertTrue(first.contains("JDns.resolverMaxBacklog"), first);
 		for(int i=0; i < 1000; i++ ) {
 			assertNull(ResolverThread.backlogFullWarning(), "no message per query");
 		}

@@ -60,7 +60,7 @@ public class DnsAdminClient implements DnsAdminConstants {
 
 	public static void main(String args[]) throws IOException  {
 
-		String name = System.getProperty("name");
+		String name = us.bringardner.net.dns.RenamedProperty.get(DnsServer.PROP_ADMIN_HOST, "name");
 		if( args.length>0) {
 			name = args[0];
 		}
@@ -72,7 +72,7 @@ public class DnsAdminClient implements DnsAdminConstants {
 		}
 
 		int port = DnsServer.getAdminPort();
-		String tmp = System.getProperty("port");
+		String tmp = us.bringardner.net.dns.RenamedProperty.get(DnsServer.PROP_ADMIN_PORT, "port");
 		if( tmp == null && args.length>1) {
 			tmp = args[1];
 		}

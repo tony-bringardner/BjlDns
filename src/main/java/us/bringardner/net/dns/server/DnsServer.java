@@ -115,6 +115,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	/** Address the admin port listens on. Default: loopback only. Use 0.0.0.0 for all interfaces. */
 	public static final String PROP_ADMIN_BIND_ADDRESS = "JDns.adminBindAddress";
 	public static final String PROP_JDBC_URL = "JDns.jdbcURL";
+	/** JDBC driver class to load (optional with JDBC 4 drivers). */
+	public static final String PROP_JDBC_CLASS = "JDns.jdbcClass";
+	public static final String PROP_JDBC_USER = "JDns.jdbcUser";
+	public static final String PROP_JDBC_PASSWORD = "JDns.jdbcPassword";
 	/**
 	 * Shared secret for the admin port (challenge-response, see AdminAuth).
 	 * Without it only clients on this machine may use the admin port.
@@ -186,8 +190,12 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	private static final int POS_LAST_UPDATE = 2;
 	private static final int POS_STATUS = 3;
 	private static final int POS_NAME = 4;
-	public static final String PROP_UDP_PROC_COUNT = "UDPProcCount";
-	public static final String PROP_TCP_PROC_COUNT = "TCPProcCount";
+	/** UDP listener threads (was UDPProcCount, still read). */
+	public static final String PROP_UDP_PROC_COUNT = "JDns.udpProcCount";
+	/** TCP acceptor threads (was TCPProcCount, still read). */
+	public static final String PROP_TCP_PROC_COUNT = "JDns.tcpProcCount";
+	/** Host DnsAdminClient connects to (was the system property "name", still read). */
+	public static final String PROP_ADMIN_HOST = "JDns.adminHost";
 	public static final String DEFAULT_DNS_DIR = "/data/services/dns/config";
 
 
@@ -496,10 +504,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	}
 
 	private Connection getConnection() throws SQLException {
-		String jdbcClass = stringProperty("JDns.jdbcClass");
+		String jdbcClass = stringProperty(PROP_JDBC_CLASS);
 		String url = stringProperty(PROP_JDBC_URL);
-		String user = getProperty("JDns.jdbcUser");
-		String password = getProperty("JDns.jdbcPassword");
+		String user = getProperty(PROP_JDBC_USER);
+		String password = getProperty(PROP_JDBC_PASSWORD);
 		if( url == null ) {
 			throw new SQLException(PROP_JDBC_URL+" is not set");
 		}
@@ -971,12 +979,12 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 		dnsDir=new File(getProperty(PROP_DNS_DIR,DEFAULT_DNS_DIR));
 
-		if( (tmp=getProperty(PROP_UDP_PROC_COUNT)) != null)  {
+		if( (tmp=us.bringardner.net.dns.RenamedProperty.get(PROP_UDP_PROC_COUNT, "UDPProcCount")) != null)  {
 			try { UDPProcCount =Integer.parseInt(tmp.trim()); } catch(Exception ex) {
 				logError("Invalid number for "+PROP_UDP_PROC_COUNT+": '"+tmp+"', using "+UDPProcCount);
 			}
 		}
-		if( (tmp=getProperty(PROP_TCP_PROC_COUNT)) != null)  {
+		if( (tmp=us.bringardner.net.dns.RenamedProperty.get(PROP_TCP_PROC_COUNT, "TCPProcCount")) != null)  {
 			try { TCPProcCount =Integer.parseInt(tmp.trim()); } catch(Exception ex) {
 				logError("Invalid number for "+PROP_TCP_PROC_COUNT+": '"+tmp+"', using "+TCPProcCount);
 			}

@@ -37,7 +37,8 @@ import us.bringardner.net.dns.*;
  */
 public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implements Runnable 
 {
-	private static final String PROP_RESOLVER_BACKLOG = "Resolver.maxBacklog";
+	/** Queued recursive queries (was Resolver.maxBacklog, still read). */
+	public static final String PROP_RESOLVER_BACKLOG = "JDns.resolverMaxBacklog";
 	private static SimpleObjectFIFO fifo;
 	private volatile Thread thread;
 	//  Set to false by stop() from another thread
@@ -212,7 +213,7 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 	}
 	
 	/**
-	 * Default for Resolver.maxBacklog. It was 20: a short burst of cache
+	 * Default for JDns.resolverMaxBacklog. It was 20: a short burst of cache
 	 * misses (e.g. a page load that looks up 30 names) already overflowed it.
 	 */
 	public static final int DEFAULT_MAX_BACKLOG = 200;
@@ -220,7 +221,7 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 	private static void initResolverThread() {
 		int maxBacklog = DEFAULT_MAX_BACKLOG;
 
-		String tmp = System.getProperty(PROP_RESOLVER_BACKLOG);
+		String tmp = us.bringardner.net.dns.RenamedProperty.get(PROP_RESOLVER_BACKLOG, "Resolver.maxBacklog");
 
 		if( tmp != null ) {
 			try {
