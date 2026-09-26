@@ -59,6 +59,7 @@ public class ZoneNotifier extends DnsBaseClass {
 	private final int retries;
 	private final int timeout;
 	private final us.bringardner.net.dns.Tsig.Key key;
+	private final int fudge;
 	private final ExecutorService sender = Executors.newSingleThreadExecutor(r -> {
 		Thread t = new Thread(r, "ZoneNotifier");
 		t.setDaemon(true);
@@ -80,7 +81,13 @@ public class ZoneNotifier extends DnsBaseClass {
 	 *   the answers must then be signed with it too
 	 */
 	public ZoneNotifier(String targets, int retries, int timeout, us.bringardner.net.dns.Tsig.Key key) {
+		this(targets, retries, timeout, key, us.bringardner.net.dns.Tsig.DEFAULT_FUDGE);
+	}
+
+	/** @param fudge TSIG fudge (seconds) to sign with */
+	public ZoneNotifier(String targets, int retries, int timeout, us.bringardner.net.dns.Tsig.Key key, int fudge) {
 		this.key = key;
+		this.fudge = us.bringardner.net.dns.Tsig.checkFudge(fudge);
 		this.targets = parseTargets(targets);
 		this.retries = Math.max(1, retries);
 		this.timeout = Math.max(1, timeout);
@@ -169,7 +176,7 @@ public class ZoneNotifier extends DnsBaseClass {
 		byte [] data = notifyMessage(zoneName, soa, id).toByteArray();
 		us.bringardner.net.dns.Tsig.Session tsig = null;
 		if( key != null ) {
-			tsig = us.bringardner.net.dns.Tsig.Session.client(key);
+			tsig = us.bringardner.net.dns.Tsig.Session.client(key, fudge);
 			data = tsig.signRequest(data);
 		}
 		int wait = timeout;

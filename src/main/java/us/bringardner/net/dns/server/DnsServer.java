@@ -149,6 +149,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	public static final String PROP_TSIG_KEY_FILE = "JDns.tsigKeyFile";
 	/** TSIG keys (names) whose signed requests may transfer zones, from any address. */
 	public static final String PROP_AXFR_KEYS = "JDns.axfrKeys";
+	/** Largest clock difference (seconds) accepted in a TSIG signed request, and the fudge we sign with (default 300). */
+	public static final String PROP_TSIG_FUDGE = "JDns.tsigFudge";
 	/** TSIG key (name) to sign NOTIFY messages with. */
 	public static final String PROP_NOTIFY_KEY = "JDns.notifyKey";
 	/** Attempts per NOTIFY (default 5). */
@@ -243,6 +245,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	//  Zone transfer allow-list (JDns.axfrAllow) and NOTIFY sender (JDns.notify)
 	private volatile AddressMatcher axfrAllow = AddressMatcher.NONE;
 	private volatile Tsig.KeyRing tsigKeys = Tsig.KeyRing.EMPTY;
+	private volatile int tsigFudge = Tsig.DEFAULT_FUDGE;
 	private volatile java.util.Set<String> axfrKeys = Collections.emptySet();
 	private volatile ZoneNotifier notifier;
 	/** Largest message of a zone transfer (a transfer is several messages). */
@@ -786,6 +789,15 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		}
 	}
 
+	/** Largest clock difference (seconds) for TSIG, 1-65535 (initServer reads JDns.tsigFudge). */
+	public int getTsigFudge() {
+		return tsigFudge;
+	}
+
+	public void setTsigFudge(int seconds) {
+		tsigFudge = Tsig.checkFudge(seconds);
+	}
+
 	/** TSIG keys whose signed requests may transfer zones (initServer reads JDns.axfrKeys). */
 	public void setAxfrKeys(String list) {
 		java.util.Set<String> ret = new java.util.HashSet<String>();
@@ -827,7 +839,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				throw new IllegalArgumentException(PROP_NOTIFY_KEY+" names an unknown TSIG key: "+kn);
 			}
 		}
-		ZoneNotifier n = new ZoneNotifier(list, retries, timeoutMs, key);
+		ZoneNotifier n = new ZoneNotifier(list, retries, timeoutMs, key, tsigFudge);
 		notifier = n.getTargets().isEmpty() ? null : n;
 		if( old != null ) {
 			old.shutdown();
@@ -891,6 +903,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				keys = keys.with(Tsig.KeyRing.load(f));
 			}
 			setTsigKeys(keys);
+			setTsigFudge(intProperty(PROP_TSIG_FUDGE, Tsig.DEFAULT_FUDGE));
 			setAxfrKeys(stringProperty(PROP_AXFR_KEYS));
 			setAxfrAllow(stringProperty(PROP_AXFR_ALLOW));
 			notifyKeyName = stringProperty(PROP_NOTIFY_KEY);

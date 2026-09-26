@@ -202,4 +202,25 @@ public class TestTsig {
 		byte [] req = Tsig.Session.client(KEYS.get("k256")).signRequest(q);
 		assertArrayEquals(q, Tsig.strip(req, Tsig.find(req)));
 	}
+
+	@Test
+	public void fudgeIsConfigurable() {
+		long now = System.currentTimeMillis()/1000;
+		//  Default: 300 s
+		byte [] req = Tsig.Session.client(KEYS.get("k256")).signRequest(query(20));
+		assertEquals(Tsig.NOERROR, Tsig.Session.verifyRequest(KEYS, req, now+250, Tsig.DEFAULT_FUDGE).getError());
+		//  A server allowing only 60 s
+		assertEquals(Tsig.BADTIME, Tsig.Session.verifyRequest(KEYS, req, now+100, 60).getError());
+		assertEquals(Tsig.NOERROR, Tsig.Session.verifyRequest(KEYS, req, now+30, 60).getError());
+		//  A server allowing 1000 s still uses the request's 300 s
+		assertEquals(Tsig.BADTIME, Tsig.Session.verifyRequest(KEYS, req, now+500, 1000).getError());
+		//  ... and a client asking for 1000 s gets it only if the server allows it
+		byte [] wide = Tsig.Session.client(KEYS.get("k256"), 1000).signRequest(query(21));
+		assertEquals(1000, Tsig.find(wide).fudge);
+		assertEquals(Tsig.NOERROR, Tsig.Session.verifyRequest(KEYS, wide, now+500, 1000).getError());
+		assertEquals(Tsig.BADTIME, Tsig.Session.verifyRequest(KEYS, wide, now+500, Tsig.DEFAULT_FUDGE).getError(), "the server caps the window");
+		for(int bad : new int[] {0, -1, 65536}) {
+			assertThrows(IllegalArgumentException.class, () -> Tsig.Session.client(KEYS.get("k256"), bad), ""+bad);
+		}
+	}
 }

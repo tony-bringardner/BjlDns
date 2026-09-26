@@ -54,7 +54,7 @@ public abstract class DnsRequestProcessor  extends DnsBaseClass implements DNS
 	currentTsig = null;
 	Tsig.Session tsig;
 	try {
-		tsig = Tsig.Session.verifyRequest(server.getTsigKeys(), query.getWire());
+		tsig = Tsig.Session.verifyRequest(server.getTsigKeys(), query.getWire(), server.getTsigFudge());
 	} catch(DnsFormatException ex) {
 		//  A TSIG that is not the last record, or a malformed one
 		sendResponse(Edns.formatError(query.getMessage()));

@@ -238,6 +238,16 @@ public class TestTsigServer {
 	}
 
 	@Test
+	public void serverFudgeSetting() {
+		DnsServer s = new DnsServer();
+		assertEquals(Tsig.DEFAULT_FUDGE, s.getTsigFudge());
+		s.setTsigFudge(60);
+		assertEquals(60, s.getTsigFudge());
+		assertThrows(IllegalArgumentException.class, () -> s.setTsigFudge(0));
+		assertThrows(IllegalArgumentException.class, () -> s.setTsigFudge(70000));
+	}
+
+	@Test
 	public void unknownAxfrKeyIsAConfigurationError() {
 		assertThrows(IllegalArgumentException.class, () -> new DnsServer().setAxfrKeys("xfr"), "no keys set");
 	}

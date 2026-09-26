@@ -63,8 +63,19 @@ public final class Tsig {
 	public static final int BADTIME = 18;
 	public static final int BADTRUNC = 22;
 
-	/** Default time window (seconds) either side of our clock. */
+	/**
+	 * Default fudge: how many seconds the signer's clock and ours may differ
+	 * (RFC 8945 recommends 300). The server setting is JDns.tsigFudge.
+	 */
 	public static final int DEFAULT_FUDGE = 300;
+
+	/** @throws IllegalArgumentException unless 1-65535 (the field is 16 bits) */
+	public static int checkFudge(int fudge) {
+		if( fudge < 1 || fudge > 0xffff ) {
+			throw new IllegalArgumentException("TSIG fudge must be 1-65535 seconds: "+fudge);
+		}
+		return fudge;
+	}
 
 	//  TSIG algorithm name -> Java MAC algorithm
 	private static final Map<String, String> ALGORITHMS = new LinkedHashMap<String, String>();
@@ -532,10 +543,23 @@ public final class Tsig {
 		 * @throws DnsFormatException for a malformed TSIG (answer FORMERR)
 		 */
 		public static Session verifyRequest(KeyRing keys, byte [] msg) {
-			return verifyRequest(keys, msg, now());
+			return verifyRequest(keys, msg, DEFAULT_FUDGE);
+		}
+
+		/**
+		 * @param maxFudge the largest clock difference (seconds) we accept. The
+		 *   window is the smaller of this and the request's own fudge, so a
+		 *   client can't widen it by asking for a large fudge.
+		 */
+		public static Session verifyRequest(KeyRing keys, byte [] msg, int maxFudge) {
+			return verifyRequest(keys, msg, now(), maxFudge);
 		}
 
 		static Session verifyRequest(KeyRing keys, byte [] msg, long now) {
+			return verifyRequest(keys, msg, now, DEFAULT_FUDGE);
+		}
+
+		static Session verifyRequest(KeyRing keys, byte [] msg, long now, int maxFudge) {
 			Record r = find(msg);
 			if( r == null ) {
 				return null;
@@ -556,7 +580,7 @@ public final class Tsig {
 			if( !MessageDigest.isEqual(expect, r.mac) ) {
 				return new Session(null, r.keyName, r.algorithm, r.fudge, new byte[0], BADSIG, r.timeSigned);
 			}
-			if( Math.abs(now - r.timeSigned) > r.fudge ) {
+			if( Math.abs(now - r.timeSigned) > Math.min(r.fudge, maxFudge) ) {
 				//  Signed with a good key, but our clocks disagree: the response is signed
 				return new Session(key, r.keyName, r.algorithm, r.fudge, r.mac, BADTIME, r.timeSigned);
 			}
@@ -598,9 +622,14 @@ public final class Tsig {
 
 		// -------------------------------------------------------- client
 
-		/** A client session with a key. */
+		/** A client session with a key (fudge 300 s). */
 		public static Session client(Key key) {
-			return new Session(key, key.getName(), key.getAlgorithm(), DEFAULT_FUDGE, null, NOERROR, 0);
+			return client(key, DEFAULT_FUDGE);
+		}
+
+		/** A client session with a key and fudge (seconds, 1-65535). */
+		public static Session client(Key key, int fudge) {
+			return new Session(key, key.getName(), key.getAlgorithm(), checkFudge(fudge), null, NOERROR, 0);
 		}
 
 		/** Sign a request. */
@@ -645,7 +674,7 @@ public final class Tsig {
 			if( r.error != NOERROR ) {
 				throw new TsigException(r.error, "the server reported TSIG error "+r.error);
 			}
-			if( Math.abs(now() - r.timeSigned) > r.fudge ) {
+			if( Math.abs(now() - r.timeSigned) > Math.min(r.fudge, fudge) ) {
 				throw new TsigException(BADTIME, "response time outside the fudge window");
 			}
 			first = false;
