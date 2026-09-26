@@ -186,7 +186,8 @@ public class Nsec extends RR {
 	@Override
 	public void toByteArray(ByteBuffer out) {
 		super.toByteArray(out);
-		Srv.writeUncompressed(out, out.isCanonical() ? next.toLowerCase(java.util.Locale.ROOT) : next);
+		//  Not lower cased in the canonical form either (RFC 6840 5.1)
+		Srv.writeUncompressed(out, next);
 		out.setBytes(typeBitmaps(types));
 		out.setRdLength();
 	}

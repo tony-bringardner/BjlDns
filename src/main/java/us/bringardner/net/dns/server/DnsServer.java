@@ -2509,6 +2509,12 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				ret.getHeader().setRCODE(ZoneUpdater.NOTAUTH);
 				return ret;
 			}
+			if( zone.getSigned() != null && zone.getSigned().isPresigned() ) {
+				//  We have no keys to sign the change with
+				log(() -> "UPDATE of "+zs.getName()+" refused: the zone is signed elsewhere");
+				ret.setResponseCodeRefused();
+				return ret;
+			}
 			ZoneUpdater.Result r;
 			try {
 				//  (a signed zone is updated without its DNSSEC records, then signed again)
@@ -2925,6 +2931,23 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		String name = Canonical.key(unsigned.getName());
 		List<DnssecKey> keys = dnssecKeys.get(name);
 		SignedZone cs = current == null ? null : current.getSigned();
+		if( unsigned.isPresigned() ) {
+			//  Signed elsewhere: served as it is
+			if( cs != null && cs.unsigned == unsigned ) {
+				return current;
+			}
+			if( keys != null && !keys.isEmpty() ) {
+				logError("DNSSEC: "+name+" is signed in its zone file; the keys in "+getDnssecKeyDir()+" are not used for it");
+			}
+			ZoneSigner.Result r = ZoneSigner.presigned(unsigned, System.currentTimeMillis()/1000);
+			for(String w : r.warnings) {
+				logError("DNSSEC: "+w);
+			}
+			SignedZone sz = r.zone.getSigned();
+			log(() -> "DNSSEC: "+name+" was signed elsewhere ("+sz.mode+", "+sz.rrsigCount+" signatures), valid until "
+					+new Date(sz.expires*1000));
+			return r.zone;
+		}
 		if( keys == null || keys.isEmpty() ) {
 			if( cs != null ) {
 				logError("DNSSEC: no keys for "+name+" any more, serving it unsigned");
@@ -2972,6 +2995,13 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			ZoneSet cur = zoneSet;
 			for(Zone z : cur.zones.values()) {
 				SignedZone sz = z.getSigned();
+				if( sz != null && sz.isPresigned() ) {
+					if( !dynamicIn(sz.unsigned, cur.zones).isEmpty() ) {
+						logError("DNSSEC: "+sz.apex+" is signed elsewhere, so its dynamic entries are served without signatures"
+								+" (validators will reject them)");
+					}
+					continue;
+				}
 				if( sz != null && !fingerprint(dynamicIn(sz.unsigned, cur.zones)).equals(sz.dynamicFingerprint) ) {
 					publishUpdatedZone(z, prepareZone(sz.unsigned, z, true, cur.zones));
 				}
@@ -2994,6 +3024,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		ZoneSet cur = zoneSet;
 		for(Zone z : new ArrayList<Zone>(cur.zones.values())) {
 			SignedZone sz = z.getSigned();
+			if( sz != null && sz.isPresigned() ) {
+				warnIfExpiring(sz, now);
+				continue;
+			}
 			if( sz == null || now < sz.refreshAt ) {
 				continue;
 			}
@@ -3018,6 +3052,35 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			ret++;
 		}
 		return ret;
+	}
+
+	//  zone -> when we last warned that its (presigned) signatures expire soon
+	private final Map<String, Long> expiryWarned = new ConcurrentHashMap<String, Long>();
+	/** Warn this long before the signatures of a zone signed elsewhere expire. */
+	static final long PRESIGNED_WARNING = 3*24*3600;
+
+	/**
+	 * A zone signed elsewhere is never signed here: log (every 6 hours) when
+	 * its signatures expire within 3 days, or have expired.
+	 * @return true if a warning was logged
+	 */
+	boolean warnIfExpiring(SignedZone sz, long now) {
+		if( sz.expires - now > PRESIGNED_WARNING ) {
+			return false;
+		}
+		Long last = expiryWarned.get(sz.apex);
+		if( last != null && now - last < 6*3600 ) {
+			return false;
+		}
+		expiryWarned.put(sz.apex, now);
+		if( sz.expires <= now ) {
+			logError("DNSSEC: signatures of "+sz.apex+" (signed elsewhere) expired "+new Date(sz.expires*1000)
+					+"; validators reject its answers until it is signed again and reloaded");
+		} else {
+			logError("DNSSEC: signatures of "+sz.apex+" (signed elsewhere) expire "+new Date(sz.expires*1000)
+					+"; sign it again and replace the zone file");
+		}
+		return true;
 	}
 
 	private static String stripDot(String n) {

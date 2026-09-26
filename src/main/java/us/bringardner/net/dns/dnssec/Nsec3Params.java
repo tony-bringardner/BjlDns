@@ -48,7 +48,15 @@ public final class Nsec3Params {
 	private final byte [] salt;
 
 	public Nsec3Params(int iterations, byte [] salt) {
-		if( iterations < 0 || iterations > MAX_ITERATIONS ) {
+		this(iterations, salt, true);
+	}
+
+	/**
+	 * @param strict limit iterations to MAX_ITERATIONS (false for the
+	 *        parameters of a zone signed elsewhere, which we only serve)
+	 */
+	public Nsec3Params(int iterations, byte [] salt, boolean strict) {
+		if( iterations < 0 || iterations > (strict ? MAX_ITERATIONS : 0xffff) ) {
 			throw new IllegalArgumentException("NSEC3 iterations must be 0-"+MAX_ITERATIONS+" (RFC 9276 recommends 0): "+iterations);
 		}
 		if( salt.length > 255 ) {

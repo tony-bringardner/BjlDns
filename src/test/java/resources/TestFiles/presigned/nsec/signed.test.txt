@@ -1,0 +1,128 @@
+; File written on Sat Sep 26 19:41:23 2026
+; dnssec_signzone version 9.18.39-0ubuntu0.24.04.7-Ubuntu
+signed.test.		3600	IN SOA	ns1.signed.test. hostmaster.signed.test. (
+					2026092601 ; serial
+					3600       ; refresh (1 hour)
+					900        ; retry (15 minutes)
+					1209600    ; expire (2 weeks)
+					300        ; minimum (5 minutes)
+					)
+			3600	RRSIG	SOA 13 2 3600 (
+					20460926224123 20260926224123 38026 signed.test.
+					gd60X5DokIeNXuQeFA8FGGdPQ2snFeR+GMS7
+					qS/SQsS0F1cKnJYlJNmbW3DhW3D6CWtkBohL
+					AmL92vjp6mIh2A== )
+			3600	NS	ns1.signed.test.
+			3600	RRSIG	NS 13 2 3600 (
+					20460926224123 20260926224123 38026 signed.test.
+					zxVGcyRM5+RSIqVOWSJRZQjHsyFGmp2eWZGq
+					sdPRHZVK4hSZxuk6u1xnxbzHwKmm20z2PnVE
+					X59cBskXrIZisg== )
+			3600	MX	10 mail.signed.test.
+			3600	RRSIG	MX 13 2 3600 (
+					20460926224123 20260926224123 38026 signed.test.
+					HqdLLTYtf9W5yLb3xJOVkiENjAlC9wUTACs4
+					EFry0zuqflWgnp3xq1UprWmG6R3O3GZeJ7XK
+					WURDuZmAc6UeEQ== )
+			300	NSEC	a.b.c.signed.test. NS SOA MX RRSIG NSEC DNSKEY
+			300	RRSIG	NSEC 13 2 300 (
+					20460926224123 20260926224123 38026 signed.test.
+					sduwkV6SsNp1Kx3wDoLMpHzSehA4m4GyBSeB
+					nvjUKIbIXZPDNhpQEoH1VqkPfaWFIG/6snwv
+					BWbaJcH9Z6deeg== )
+			3600	DNSKEY	257 3 13 (
+					QUyjlYgl4ZfKBG8PrdyvHAQn+PrAICtIXYjf
+					eoJFAQhtZPE3DqvVO68ceiazWU72lvpiK8jK
+					3yhKHN7wrFAeZg==
+					) ; KSK; alg = ECDSAP256SHA256 ; key id = 38026
+			3600	RRSIG	DNSKEY 13 2 3600 (
+					20460926224123 20260926224123 38026 signed.test.
+					5B9kHFpQ3LE6dbVdEAU9o6UhMHtrrwlCVExr
+					wTpm8W7NMWqcv64+4Opu36pI8P1z4oVlNV3p
+					8YOL4mKsVx5+Qw== )
+Mixed.signed.test.	3600	IN TXT	"Case"
+			3600	RRSIG	TXT 13 3 3600 (
+					20460926224123 20260926224123 38026 signed.test.
+					yKl7lkgg62D0fizdY+JX7GVPePaX++yM1Scd
+					qfkqNA+sD0npvKEHFRk2JAlf+vnZHwXSh8KD
+					dK1WrCe3GLxKcg== )
+			300	NSEC	ns1.signed.test. TXT RRSIG NSEC
+			300	RRSIG	NSEC 13 3 300 (
+					20460926224123 20260926224123 38026 signed.test.
+					89lcxKwwcGBtnjfxuQfjjkbQXFFmkjLdD1+R
+					wPYw6NCDMqC/nUjN8U3iZRGyFBtWjME8FLlg
+					jnePIlyDINSdlA== )
+a.b.c.signed.test.	3600	IN A	10.0.0.1
+			3600	RRSIG	A 13 5 3600 (
+					20460926224123 20260926224123 38026 signed.test.
+					c5yoh5bBd00yaZR+r8FIm4TwHsh1Tpc/wca/
+					EBTy352k//b7BHTX4vYmv/rvE35XT2B+q69l
+					+wlmKAJe+x4m1Q== )
+			300	NSEC	mail.signed.test. A RRSIG NSEC
+			300	RRSIG	NSEC 13 5 300 (
+					20460926224123 20260926224123 38026 signed.test.
+					JkmYLxC2cc61dIDFI8Aqi77gy3pKrCmhFUNT
+					3+Gup+kUWxsgVLxPESMEAewzw9/lA4JgNHUu
+					DF/kwX8JSrfn9Q== )
+ns.sub.signed.test.	3600	IN A	10.0.0.54
+mail.signed.test.	3600	IN A	10.0.0.25
+			3600	RRSIG	A 13 3 3600 (
+					20460926224123 20260926224123 38026 signed.test.
+					xsaAFb20opHEjIENPapfVTL95kw6RWsbuW2D
+					jSyPggz1vkDzv/lmR+6NLmGs8qJ2xDGCeIAU
+					YME++dvGnImGwQ== )
+			300	NSEC	Mixed.signed.test. A RRSIG NSEC
+			300	RRSIG	NSEC 13 3 300 (
+					20460926224123 20260926224123 38026 signed.test.
+					ZBV41FHZ43Ih9LJ2M+ImnbNll/TgEVOY9Yqa
+					Y//lPYxk2UynyrTeF0LoY8KGZjZaE9Xt3EKA
+					BvwUG14j+qabBA== )
+ns1.signed.test.	3600	IN A	10.0.0.53
+			3600	RRSIG	A 13 3 3600 (
+					20460926224123 20260926224123 38026 signed.test.
+					AsBZQp7yiOhp9EgyaMGN//Vex5vGZo2DHVIy
+					XBWBHc0SnkmLhof1v9fsjSLWEmBQSx4Ie1pU
+					nuZdgjVfWBkbhw== )
+			300	NSEC	sub.signed.test. A RRSIG NSEC
+			300	RRSIG	NSEC 13 3 300 (
+					20460926224123 20260926224123 38026 signed.test.
+					LtWyVWXgg4W+4BVo3ld0RIN659k2Vc5IRI81
+					z99k4l5OnmeJNfNs+d8LE2QlntiaVudJppET
+					89JZozn03TBN4A== )
+*.wild.signed.test.	3600	IN A	10.0.0.99
+			3600	RRSIG	A 13 3 3600 (
+					20460926224123 20260926224123 38026 signed.test.
+					+wCGtay7VEWMgIBfe4GdRy/pAy0EyltAPwm+
+					Pah5TTaJcY/EG6EpJMd7NOCTn700gIGdbbOJ
+					8tzR13XTD/w+6w== )
+			300	NSEC	www.signed.test. A RRSIG NSEC
+			300	RRSIG	NSEC 13 3 300 (
+					20460926224123 20260926224123 38026 signed.test.
+					0EQFsYn8jtD6zP95jDZ4deVxSMBqEpvNiYdl
+					KDs4rFRPz9Cu6pCxSciAU60AhmGRNGvjgIl3
+					y4Zi28GVokuxmw== )
+www.signed.test.	3600	IN A	10.0.0.80
+			3600	RRSIG	A 13 3 3600 (
+					20460926224123 20260926224123 38026 signed.test.
+					1cv0pyX6O2TvcgnrGyamG4nBu0UD34QQ93q7
+					s/6N37lkJciXCgzoRNBxhWerpcE0uVFITL5n
+					aqqFT0IvJgkllg== )
+			3600	AAAA	2001:db8::80
+			3600	RRSIG	AAAA 13 3 3600 (
+					20460926224123 20260926224123 38026 signed.test.
+					WtTkJi/1XfCa1gBKsCBD789A+5UEMQK23sQa
+					ljqOMkTpB6cptWbnT5S20UXf8bi8NS6yBLjB
+					mvQOT0i7Fc8Dtg== )
+			300	NSEC	signed.test. A AAAA RRSIG NSEC
+			300	RRSIG	NSEC 13 3 300 (
+					20460926224123 20260926224123 38026 signed.test.
+					znwAKFDlifYszi8MdGMGFsGioQcVP+gAfSH/
+					RVXiahJ9bs8WOUy/ATBogAZ2jfUQENR7MO+U
+					VEnC7N0JmL8mcA== )
+sub.signed.test.	3600	IN NS	ns.sub.signed.test.
+			300	NSEC	*.wild.signed.test. NS RRSIG NSEC
+			300	RRSIG	NSEC 13 3 300 (
+					20460926224123 20260926224123 38026 signed.test.
+					OY9BZ3iV67ygZD/wCTBR2JCUxgMsajEEq0+S
+					06Ng8cZMKKUemyjMPhq11rjuHB66K7L9imWC
+					MtWOEMZgT0pJXA== )

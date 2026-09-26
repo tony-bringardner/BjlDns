@@ -279,7 +279,140 @@ public final class ZoneSigner {
 		}
 		long refresh = Math.min(expiration - validity/4, next);
 		ret.setSigned(new SignedZone(unsigned, apex, sigs, auth, chain, hashed, nsec3, now, expiration, refresh,
-				keyId(keys, now), dynamicFingerprint, count));
+				keyId(keys, now), dynamicFingerprint, count, false));
+		return new Result(ret, warnings);
+	}
+
+	/**
+	 * A zone signed elsewhere (its file holds DNSKEY, RRSIG and NSEC or NSEC3
+	 * records): its own signatures and chain are served as they are. Every
+	 * signature is checked; bad or expired ones are reported as warnings
+	 * (the zone is still served, as the signer made it).
+	 */
+	static Result presigned(Zone loaded, long now) {
+		List<String> warnings = new ArrayList<String>();
+		String apex = Canonical.key(loaded.getName());
+		Soa soa = loaded.getSoa();
+
+		//  The records by name and type (SOA included)
+		TreeMap<String, TreeMap<Integer, List<RR>>> sets = new TreeMap<String, TreeMap<Integer, List<RR>>>(Canonical.NAME_ORDER);
+		add(sets, apex, soa);
+		List<Name> names = loaded.getNames();
+		List<List<RR>> rrs = loaded.getRrs();
+		for(int i=0; i < names.size() && i < rrs.size(); i++ ) {
+			String n = Canonical.key(names.get(i).toString());
+			if( Canonical.isBelow(n, apex, true) ) {
+				for(RR rr : rrs.get(i)) {
+					if( rr.getType() != DNS.SOA ) {
+						add(sets, n, rr);
+					}
+				}
+			}
+		}
+		Set<String> cuts = new HashSet<String>();
+		for(Map.Entry<String, TreeMap<Integer, List<RR>>> e : sets.entrySet()) {
+			if( !e.getKey().equals(apex) && e.getValue().containsKey(DNS.NS) ) {
+				cuts.add(e.getKey());
+			}
+		}
+		List<String> auth = new ArrayList<String>();
+		TreeMap<String, Nsec> chain = new TreeMap<String, Nsec>(Canonical.NAME_ORDER);
+		for(Map.Entry<String, TreeMap<Integer, List<RR>>> e : sets.entrySet()) {
+			if( isOccluded(e.getKey(), apex, cuts) ) {
+				continue;
+			}
+			auth.add(e.getKey());
+			List<RR> nsec = e.getValue().get(DNS.NSEC);
+			if( nsec != null ) {
+				chain.put(e.getKey(), (Nsec)nsec.get(0));
+			}
+		}
+
+		//  NSEC3: by hash label, with the zone's parameters
+		TreeMap<String, Nsec3> hashed = null;
+		Nsec3Params params = null;
+		if( !loaded.getPresignedNsec3().isEmpty() ) {
+			hashed = new TreeMap<String, Nsec3>();
+			for(Nsec3 n : loaded.getPresignedNsec3()) {
+				String o = Canonical.key(n.getName());
+				hashed.put(o.substring(0, o.indexOf('.')), n);
+				if( params == null ) {
+					params = new Nsec3Params(n.getIterations(), n.getSalt(), false);
+				}
+			}
+			TreeMap<Integer, List<RR>> at = sets.get(apex);
+			List<RR> p = at == null ? null : at.get(DNS.NSEC3PARAM);
+			if( p != null ) {
+				Nsec3param np = (Nsec3param)p.get(0);
+				params = new Nsec3Params(np.getIterations(), np.getSalt(), false);
+			}
+			if( !chain.isEmpty() ) {
+				warnings.add(apex+" has both NSEC and NSEC3 records; using NSEC3");
+				chain.clear();
+			}
+		} else if( chain.isEmpty() ) {
+			warnings.add(apex+" has no NSEC or NSEC3 records: names that don't exist can't be proven");
+		}
+
+		//  The signatures, each checked
+		List<Dnskey> keys = new ArrayList<Dnskey>();
+		TreeMap<Integer, List<RR>> apexSets = sets.get(apex);
+		if( apexSets != null && apexSets.get(DNS.DNSKEY) != null ) {
+			for(RR k : apexSets.get(DNS.DNSKEY)) {
+				keys.add((Dnskey)k);
+			}
+		} else {
+			warnings.add(apex+" has no DNSKEY records at the apex");
+		}
+		Map<String, List<Rrsig>> sigs = new HashMap<String, List<Rrsig>>();
+		long expires = Long.MAX_VALUE;
+		long signedAt = Long.MAX_VALUE;
+		int bad = 0;
+		int expired = 0;
+		String firstBad = null;
+		for(Rrsig s : loaded.getPresignedSigs()) {
+			String owner = Canonical.key(s.getName());
+			sigs.computeIfAbsent(SignedZone.sigKey(owner, s.getTypeCovered()), k -> new ArrayList<Rrsig>()).add(s);
+			expires = Math.min(expires, s.getExpiration());
+			signedAt = Math.min(signedAt, s.getInception());
+			if( s.getExpiration() < now ) {
+				expired++;
+			}
+			List<? extends RR> set;
+			if( s.getTypeCovered() == DNS.NSEC3 && hashed != null ) {
+				Nsec3 n = hashed.get(owner.substring(0, Math.max(0, owner.indexOf('.'))));
+				set = n == null ? null : java.util.Collections.singletonList(n);
+			} else {
+				TreeMap<Integer, List<RR>> at = sets.get(owner);
+				set = at == null ? null : at.get(s.getTypeCovered());
+			}
+			boolean ok = false;
+			if( set != null ) {
+				for(Dnskey k : keys) {
+					if( k.getKeyTag() == s.getKeyTag() && Canonical.verify(s, owner, set, k) ) {
+						ok = true;
+						break;
+					}
+				}
+			}
+			if( !ok ) {
+				bad++;
+				if( firstBad == null ) {
+					firstBad = s.getName()+" "+us.bringardner.net.dns.Utility.TYPENAMES[Math.min(s.getTypeCovered(), 255)];
+				}
+			}
+		}
+		if( bad > 0 ) {
+			warnings.add(apex+": "+bad+" signatures don't verify (the first: "+firstBad+"); validators will reject those answers");
+		}
+		if( expired > 0 ) {
+			warnings.add(apex+": "+expired+" signatures have expired; sign the zone again");
+		}
+
+		Zone ret = loaded.copyForUpdate();
+		ret.setSigned(new SignedZone(loaded, apex, sigs, auth, chain, hashed, params,
+				signedAt == Long.MAX_VALUE ? now : signedAt, expires == Long.MAX_VALUE ? now : expires,
+				Long.MAX_VALUE, "presigned", "", loaded.getPresignedSigs().size(), true));
 		return new Result(ret, warnings);
 	}
 

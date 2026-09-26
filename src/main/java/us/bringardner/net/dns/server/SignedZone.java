@@ -52,8 +52,14 @@ public final class SignedZone {
 	//  NSEC3: hash label -> NSEC3 (null with NSEC)
 	private final NavigableMap<String, Nsec3> hashed;
 	private final Nsec3Params nsec3;
-	/** "NSEC" or "NSEC3 " + parameters. */
+	/** "NSEC" or "NSEC3 " + parameters, "presigned " first for a zone signed elsewhere. */
 	final String mode;
+	private final boolean presigned;
+
+	/** Signed elsewhere: served as loaded, never signed here. */
+	public boolean isPresigned() {
+		return presigned;
+	}
 	/** When it was signed and when the first signature expires (seconds since 1970). */
 	final long signedAt;
 	final long expires;
@@ -72,7 +78,8 @@ public final class SignedZone {
 	 */
 	SignedZone(Zone unsigned, String apex, Map<String, List<Rrsig>> sigs, java.util.Collection<String> names,
 			Map<String, Nsec> chain, NavigableMap<String, Nsec3> hashed, Nsec3Params nsec3,
-			long signedAt, long expires, long refreshAt, String keyId, String dynamicFingerprint, int rrsigCount) {
+			long signedAt, long expires, long refreshAt, String keyId, String dynamicFingerprint, int rrsigCount,
+			boolean presigned) {
 		this.unsigned = unsigned;
 		this.apex = apex;
 		this.sigs = sigs;
@@ -88,7 +95,8 @@ public final class SignedZone {
 		this.chain = byKey;
 		this.hashed = hashed;
 		this.nsec3 = nsec3;
-		this.mode = nsec3 == null ? "NSEC" : "NSEC3 "+nsec3;
+		this.mode = (presigned ? "presigned " : "")+(nsec3 == null ? "NSEC" : "NSEC3 "+nsec3);
+		this.presigned = presigned;
 		this.signedAt = signedAt;
 		this.expires = expires;
 		this.refreshAt = refreshAt;

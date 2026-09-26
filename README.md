@@ -12,7 +12,7 @@ The intent of this DNS code is to support a large number of domains with very li
  +  Domains may be in a database or file system
  +  Support Dynamic DNS (DDNS) with trivial configuration
  +  Zone file record types: SOA, NS, A, AAAA, CNAME, PTR, MX, TXT, SPF, HINFO, SRV, CAA, HTTPS, SVCB, DS (other types are passed through unchanged when resolving)
- +  DNSSEC: zones are signed by the server itself when it has keys for them (see below)
+ +  DNSSEC: zones are signed by the server itself when it has keys for them, or served as signed by another tool (see below)
 
 Not supported: incremental zone transfer (IXFR is answered with the whole zone), acting as a secondary (incoming NOTIFY gets NOTIMP), NSEC3 opt-out, validating answers from other servers when resolving, and the `$GENERATE` zone file directive.
 
@@ -51,10 +51,16 @@ What the server does:
  +  Key rollover: every key file of a zone is used. A `.key` file without its `.private` file is published in the DNSKEY set but doesn't sign. BIND's timing fields in the `.private` file (`Publish`, `Activate`, `Inactive`, `Delete`, set with `dnssec-settime`) are followed. Adding, removing or changing a key file re-signs the zone.
  +  If a zone can't be signed (e.g. no key has its private file), the error is logged and the previous signatures are served while they are valid, otherwise the zone is served unsigned.
 
+Zones signed elsewhere (for example with BIND's `dnssec-signzone`, NSEC or NSEC3, so the private keys never touch the server): put the signed file in the zone directory as `<zone>.txt`. A zone file with RRSIG records is served with its own DNSKEY, RRSIG, NSEC / NSEC3 and NSEC3PARAM records, with the same answers and proofs as a zone signed here.
+ +  Every signature is checked when the zone loads; ones that don't verify or have expired are logged (the zone is still served as the signer made it). Keys in the key directory are not used for it.
+ +  The server can't sign changes: dynamic UPDATE is REFUSED, and admin-port dynamic entries in such a zone are served without signatures (logged).
+ +  Nothing re-signs it here: a warning is logged every 6 hours from 3 days before the first signature expires. Sign it again and replace the file (a changed file is reloaded).
+ +  A zone file with DNSKEY, NSEC or NSEC3 records but no RRSIG is refused.
+
 In a signed zone:
  +  Wildcards follow RFC 4592, as validators expect: `*.example.com` also matches `a.b.example.com`, but never a name that exists or has names below it.
  +  An SOA query for a name other than the apex gets NODATA (the made-up SOA the default zone gives other names can't be signed).
- +  DNSKEY, RRSIG, NSEC, NSEC3 and NSEC3PARAM records can't be put in the zone file or added with UPDATE (DS can).
+ +  DNSKEY, RRSIG, NSEC, NSEC3 and NSEC3PARAM records can't be added with UPDATE (DS can); in a zone file they make it a zone signed elsewhere.
  +  Names outside the zone itself (the `*.*.` patterns a default zone uses for other domains) are served unsigned.
    
  

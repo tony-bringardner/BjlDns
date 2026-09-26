@@ -617,12 +617,12 @@ public class TestDnssecServer {
 	}
 
 	@Test
-	public void zoneFilesTakeDsButNotSignatures() throws Exception {
+	public void zoneFilesTakeDsButNotHalfSignedData() throws Exception {
 		File bad = new File(dir, "bad.test.txt");
 		write(bad, "@\tIN\tSOA\tns1 hostmaster ( 1 3600 900 1209600 300 )\n\tNS\tns1\nns1\tA\t10.0.0.1\n"
 				+"@\tDNSKEY\t257 3 13 AAAA\n");
 		IOException ex = org.junit.jupiter.api.Assertions.assertThrows(IOException.class, () -> new Zone(bad));
-		assertTrue(ex.getMessage().contains("made by the server"), ex.getMessage());
+		assertTrue(ex.getMessage().contains("no RRSIG"), ex.getMessage());
 		//  A DS with its digest split in two
 		File ok = new File(dir, "ok.test.txt");
 		write(ok, "@\tIN\tSOA\tns1 hostmaster ( 1 3600 900 1209600 300 )\n\tNS\tns1\nns1\tA\t10.0.0.1\n"

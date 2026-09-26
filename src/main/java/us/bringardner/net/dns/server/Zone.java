@@ -152,7 +152,47 @@ public class Zone implements DNS {
 	 * the list represents a line from a master file
 	 **/
 	private void addRR(List<String> list){
-		addRR(buildRR(list));
+		RR rr = buildRR(list);
+		//  The signatures and NSEC3 records of a zone signed elsewhere are
+		//  kept apart (they are not names of the zone; see ZoneSigner.presigned)
+		if( rr.getType() == RRSIG ) {
+			presignedSigs.add((us.bringardner.net.dns.Rrsig)rr);
+		} else if( rr.getType() == NSEC3 ) {
+			presignedNsec3.add((us.bringardner.net.dns.Nsec3)rr);
+		} else {
+			addRR(rr);
+		}
+	}
+
+	//  RRSIG and NSEC3 records read from the zone file (a zone signed elsewhere)
+	private List<us.bringardner.net.dns.Rrsig> presignedSigs = new ArrayList<us.bringardner.net.dns.Rrsig>();
+	private List<us.bringardner.net.dns.Nsec3> presignedNsec3 = new ArrayList<us.bringardner.net.dns.Nsec3>();
+
+	private boolean hasDnssecRecords() {
+		for(List<RR> l : rrs) {
+			for(RR rr : l) {
+				int t = rr.getType();
+				if( t == DNSKEY || t == NSEC || t == NSEC3PARAM ) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/** Was the zone file signed elsewhere (does it hold RRSIG records)? */
+	public boolean isPresigned() {
+		return !presignedSigs.isEmpty();
+	}
+
+	/** The RRSIG records of a zone file signed elsewhere. */
+	public List<us.bringardner.net.dns.Rrsig> getPresignedSigs() {
+		return Collections.unmodifiableList(presignedSigs);
+	}
+
+	/** The NSEC3 records of a zone file signed elsewhere. */
+	public List<us.bringardner.net.dns.Nsec3> getPresignedNsec3() {
+		return Collections.unmodifiableList(presignedNsec3);
 	}
 
 	/**
@@ -289,13 +329,14 @@ public class Zone implements DNS {
 			break;
 		}
 
+		//  DNSSEC records: a zone signed elsewhere (dnssec-signzone, ...)
 		case DNSKEY:
 		case RRSIG:
 		case NSEC:
 		case NSEC3:
 		case NSEC3PARAM:
-			throw new IllegalArgumentException(Utility.TYPENAMES[type]+" records are made by the server when it signs the zone"
-					+" (keys in JDns.dnssecKeyDir); remove them from the zone file");
+			rr = PresignedRecords.parse(type, rrName, dnsClass, new ArrayList<String>(list.subList(3, list.size())), this::fixName);
+			break;
 
 		case SPF: Spf spf = new Spf(rrName,dnsClass);
 		rr = spf;
@@ -1113,6 +1154,10 @@ public class Zone implements DNS {
 			if( soa == null ) {
 				throw new IOException("No SOA record in "+masterFile.getName());
 			}
+			if( !isPresigned() && (!presignedNsec3.isEmpty() || hasDnssecRecords()) ) {
+				throw new IOException(masterFile.getName()+" has DNSSEC records (DNSKEY, NSEC, NSEC3...) but no RRSIG:"
+						+" load a complete signed zone, or remove them and let the server sign the zone (keys in JDns.dnssecKeyDir)");
+			}
 			replayJournal();
 		} finally {
 			includeStack = null;
@@ -1269,6 +1314,8 @@ public class Zone implements DNS {
 		z.soa = soa;
 		z.masterFile = masterFile;
 		z.includedFiles = includedFiles;
+		z.presignedSigs = presignedSigs;
+		z.presignedNsec3 = presignedNsec3;
 		z.names = new ArrayList<Name>(names);
 		z.rrs = new ArrayList<List<RR>>();
 		for(List<RR> l : rrs) {
