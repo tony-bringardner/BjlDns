@@ -138,6 +138,11 @@ public  class RR extends Section
 		RR sec = new RR(in);
 		RR ret = null;
 		int type = sec.getType();
+		if( sec.getRdLength() == 0 ) {
+			//  No rdata (e.g. an UPDATE prerequisite or 'delete RRset', RFC 2136):
+			//  keep it generic, the typed classes can't parse an empty rdata
+			return new RR(sec);
+		}
 
 		switch( sec.getType() ) {
 		case A     : ret = new A(sec);break;

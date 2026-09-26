@@ -134,6 +134,14 @@ public class Zone implements DNS {
 	 * the list represents a line from a master file
 	 **/
 	private void addRR(List<String> list){
+		addRR(buildRR(list));
+	}
+
+	/**
+	 * Make a record from the fields of a zone file line
+	 * (owner, TTL, [class,] type, rdata...).
+	 */
+	private RR buildRR(List<String> list){
 		//  See if the dnsClass is specified, it must be the same, then remove it
 		String tmp = (String)list.get(2);
 
@@ -272,8 +280,7 @@ public class Zone implements DNS {
 
 		rr.setTTL(ttl);
 
-		addRR(rr);	
-
+		return rr;
 	}
 	/**
 	 * Add a resource record based on the info in this ArrayList.
@@ -1006,12 +1013,236 @@ public class Zone implements DNS {
 			if( soa == null ) {
 				throw new IOException("No SOA record in "+masterFile.getName());
 			}
+			replayJournal();
 		} finally {
 			includeStack = null;
 		}
 		setWildCards(true);
 		populateNs();
 		buildIndex();
+	}
+
+	// ------------------------------------------------------------ dynamic UPDATE (RFC 2136)
+
+	/**
+	 * The journal of dynamic updates: the zone file name plus ".jnl". Updates
+	 * are appended to it and replayed on top of the zone file when the zone is
+	 * loaded; the zone file itself is never rewritten. The journal records the
+	 * zone file's serial it applies to: if the zone file was edited and its
+	 * serial changed, the journal is set aside (renamed .jnl.old) and not used.
+	 */
+	public File getJournalFile() {
+		return masterFile == null ? null : new File(masterFile.getPath()+".jnl");
+	}
+
+	private void replayJournal() throws IOException {
+		File jnl = getJournalFile();
+		if( jnl == null || !jnl.isFile() ) {
+			return;
+		}
+		int line = 0;
+		try(BufferedReader in = new BufferedReader(new FileReader(jnl))) {
+			String text;
+			boolean based = false;
+			while( (text = in.readLine()) != null ) {
+				line++;
+				text = text.trim();
+				if( text.isEmpty() || text.startsWith(";") ) {
+					continue;
+				}
+				List<String> t = parseLine(null, text);
+				String op = t.get(0);
+				if( !based ) {
+					if( !op.equals("base") || t.size() != 2 ) {
+						throw new IOException("journal must start with 'base <serial>'");
+					}
+					if( Long.parseLong(t.get(1)) != (soa.getSerial() & 0xffffffffL) ) {
+						//  The zone file was edited (new serial): its content wins
+						File old = new File(jnl.getPath()+".old");
+						old.delete();
+						if( !jnl.renameTo(old) ) {
+							throw new IOException("can't set aside the out of date journal "+jnl);
+						}
+						return;
+					}
+					based = true;
+					continue;
+				}
+				applyJournalLine(op, t.subList(1, t.size()));
+			}
+		} catch(IOException | RuntimeException e) {
+			throw new IOException("Error in "+jnl.getName()+" at line "+line+": "+e.getMessage(), e);
+		}
+	}
+
+	private void applyJournalLine(String op, List<String> args) {
+		switch(op) {
+		case "serial": {
+			Soa s = (Soa)soa.copy();
+			s.setSerial((int)Long.parseLong(args.get(0)));
+			soa = s;
+			break;
+		}
+		case "add":
+			addRecord(buildRR(normalize(new ArrayList<String>(args))));
+			break;
+		case "del": {
+			//  owner class type rdata...: one record
+			List<String> l = new ArrayList<String>(args);
+			l.add(1, "0");
+			RR rr = buildRR(normalize(l));
+			String key = recordKey(rr);
+			removeRecords(rr.getName(), r -> recordKey(r).equals(key));
+			break;
+		}
+		case "delset": {
+			int type = Utility.typeOf(args.get(1));
+			removeRecords(stripDot(args.get(0)), r -> r.getType() == type);
+			break;
+		}
+		case "delname":
+			removeRecords(stripDot(args.get(0)), r -> true);
+			break;
+		case "delname-keepns":
+			//  everything at the apex except NS (and the SOA, kept apart)
+			removeRecords(stripDot(args.get(0)), r -> r.getType() != NS);
+			break;
+		default:
+			throw new IllegalArgumentException("unknown journal entry '"+op+"'");
+		}
+	}
+
+	/** Types a dynamic update can add (the ones the zone file reader understands). */
+	public static boolean isUpdatableType(int type) {
+		switch(type) {
+		case A: case AAAA: case NS: case CNAME: case PTR: case MX: case TXT: case SPF:
+		case HINFO: case SRV: case CAA: case SVCB: case HTTPS:
+			return true;
+		default:
+			return false;
+		}
+	}
+
+	/** A record's data as zone file text (quoted where the reader needs it). */
+	public static String rdataText(RR rr) {
+		switch(rr.getType()) {
+		case TXT:
+		case SPF:
+			return quote(((Txt)rr).getText());
+		case HINFO:
+			return quote(((us.bringardner.net.dns.Hinfo)rr).getCpu())+" "+quote(((us.bringardner.net.dns.Hinfo)rr).getOs());
+		default:
+			return rr.getRdataAsString();
+		}
+	}
+
+	private static String quote(String s) {
+		return "\""+(s == null ? "" : s)+"\"";
+	}
+
+	/** Owner, type and data of a record: the same key means the same record (TTL aside). */
+	public static String recordKey(RR rr) {
+		String data = rdataText(rr);
+		int t = rr.getType();
+		if( t != TXT && t != SPF && t != HINFO && t != CAA ) {
+			data = data.toLowerCase();
+		}
+		return stripDot(rr.getName()).toLowerCase()+" "+t+" "+data;
+	}
+
+	/** A zone file style line for a record (absolute owner). */
+	public static String recordLine(RR rr) {
+		int c = rr.getDnsClass();
+		String cls = c > 0 && c < Utility.CLASSNAMES.length ? Utility.CLASSNAMES[c] : "IN";
+		return stripDot(rr.getName())+". "+rr.getTTL()+" "+cls+" "+Utility.TYPENAMES[rr.getType()]+" "+rdataText(rr);
+	}
+
+	/**
+	 * A copy to change: the records are shared (they are never modified),
+	 * the lists are new.
+	 */
+	public Zone copyForUpdate() {
+		Zone z = new Zone();
+		z.fileName = fileName;
+		z.lastModified = lastModified;
+		z.name = name;
+		z.soa = soa;
+		z.masterFile = masterFile;
+		z.includedFiles = includedFiles;
+		z.names = new ArrayList<Name>(names);
+		z.rrs = new ArrayList<List<RR>>();
+		for(List<RR> l : rrs) {
+			z.rrs.add(new ArrayList<RR>(l));
+		}
+		z.origin = stripDot(name);
+		return z;
+	}
+
+	/** Replace the SOA (e.g. with a new serial). */
+	public void replaceSoa(Soa newSoa) {
+		soa = newSoa;
+	}
+
+	private int exactIndex(String name) {
+		String key = stripDot(name).toLowerCase(java.util.Locale.ROOT);
+		for(int i=0; i < names.size(); i++ ) {
+			if( names.get(i).toString().toLowerCase(java.util.Locale.ROOT).equals(key) ) {
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	/** The records at exactly this name (no wildcard matching); empty if none. */
+	public List<RR> exactRecords(String name) {
+		int i = exactIndex(name);
+		return i < 0 ? new ArrayList<RR>() : new ArrayList<RR>(rrs.get(i));
+	}
+
+	/** Add a record at exactly its own name (never into a wildcard's list). */
+	public void addRecord(RR rr) {
+		int i = exactIndex(rr.getName());
+		if( i < 0 ) {
+			Name n = new Name(stripDot(rr.getName()));
+			n.setDoWildCard(true);
+			names.add(n);
+			rrs.add(new ArrayList<RR>());
+			i = names.size()-1;
+		}
+		rrs.get(i).add(rr);
+		invalidateIndex();
+	}
+
+	/** Remove the records at exactly this name that match. @return how many */
+	public int removeRecords(String name, java.util.function.Predicate<RR> which) {
+		int i = exactIndex(name);
+		if( i < 0 ) {
+			return 0;
+		}
+		List<RR> l = rrs.get(i);
+		int before = l.size();
+		l.removeIf(which);
+		int ret = before - l.size();
+		if( l.isEmpty() ) {
+			names.remove(i);
+			rrs.remove(i);
+		}
+		if( ret > 0 ) {
+			invalidateIndex();
+		}
+		return ret;
+	}
+
+	/** @return true if the name is the zone or below it */
+	public boolean contains(String name) {
+		String n = stripDot(name).toLowerCase(java.util.Locale.ROOT);
+		String z = stripDot(this.name).toLowerCase(java.util.Locale.ROOT);
+		return n.equals(z) || n.endsWith("."+z);
+	}
+
+	/** @return true if the name is the zone's apex */
+	public boolean isApex(String name) {
+		return stripDot(name).equalsIgnoreCase(stripDot(this.name));
 	}
 
 	/**

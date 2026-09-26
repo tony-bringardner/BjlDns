@@ -151,6 +151,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	public static final String PROP_AXFR_KEYS = "JDns.axfrKeys";
 	/** Largest clock difference (seconds) accepted in a TSIG signed request, and the fudge we sign with (default 300). */
 	public static final String PROP_TSIG_FUDGE = "JDns.tsigFudge";
+	/** TSIG keys (names) whose signed UPDATE requests may change zones (RFC 2136). */
+	public static final String PROP_UPDATE_KEYS = "JDns.updateKeys";
+	/** Addresses / networks allowed to send unsigned UPDATE requests (default: none; prefer keys). */
+	public static final String PROP_UPDATE_ALLOW = "JDns.updateAllow";
 	/** TSIG key (name) to sign NOTIFY messages with. */
 	public static final String PROP_NOTIFY_KEY = "JDns.notifyKey";
 	/** Attempts per NOTIFY (default 5). */
@@ -247,6 +251,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	private volatile Tsig.KeyRing tsigKeys = Tsig.KeyRing.EMPTY;
 	private volatile int tsigFudge = Tsig.DEFAULT_FUDGE;
 	private volatile java.util.Set<String> axfrKeys = Collections.emptySet();
+	private volatile java.util.Set<String> updateKeys = Collections.emptySet();
+	private volatile AddressMatcher updateAllow = AddressMatcher.NONE;
 	private volatile ZoneNotifier notifier;
 	/** Largest message of a zone transfer (a transfer is several messages). */
 	static final int AXFR_MESSAGE_SIZE = 16*1024;
@@ -800,19 +806,33 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 	/** TSIG keys whose signed requests may transfer zones (initServer reads JDns.axfrKeys). */
 	public void setAxfrKeys(String list) {
+		axfrKeys = keyNames(list, PROP_AXFR_KEYS);
+	}
+
+	/** TSIG keys whose signed UPDATE requests may change zones (initServer reads JDns.updateKeys). */
+	public void setUpdateKeys(String list) {
+		updateKeys = keyNames(list, PROP_UPDATE_KEYS);
+	}
+
+	/** Who may send unsigned UPDATE requests (initServer reads JDns.updateAllow). */
+	public void setUpdateAllow(String list) {
+		updateAllow = AddressMatcher.parse(list);
+	}
+
+	private java.util.Set<String> keyNames(String list, String prop) {
 		java.util.Set<String> ret = new java.util.HashSet<String>();
 		if( list != null ) {
 			for(String k : list.trim().split("[,\\s]+")) {
 				if( !k.isEmpty() ) {
 					Tsig.Key key = tsigKeys.get(k);
 					if( key == null ) {
-						throw new IllegalArgumentException(PROP_AXFR_KEYS+" names an unknown TSIG key: "+k);
+						throw new IllegalArgumentException(prop+" names an unknown TSIG key: "+k);
 					}
 					ret.add(key.getName());
 				}
 			}
 		}
-		axfrKeys = Collections.unmodifiableSet(ret);
+		return Collections.unmodifiableSet(ret);
 	}
 
 	/** The TSIG key to sign NOTIFY with (set before setNotifyTargets). */
@@ -905,6 +925,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			setTsigKeys(keys);
 			setTsigFudge(intProperty(PROP_TSIG_FUDGE, Tsig.DEFAULT_FUDGE));
 			setAxfrKeys(stringProperty(PROP_AXFR_KEYS));
+			setUpdateKeys(stringProperty(PROP_UPDATE_KEYS));
+			setUpdateAllow(stringProperty(PROP_UPDATE_ALLOW));
 			setAxfrAllow(stringProperty(PROP_AXFR_ALLOW));
 			notifyKeyName = stringProperty(PROP_NOTIFY_KEY);
 			setNotifyTargets(stringProperty(PROP_NOTIFY),
@@ -1522,6 +1544,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			retMsg.setHeader(hdr);
 			retMsg.setResponseCodeRefused();
 			ret.add(retMsg);
+		} else if( hdr.getOPCODE() == DNS.UPDATE ) {
+			ret.add(update(req, hdr));
 		} else if( hdr.getOPCODE() != DNS.QUERY ) {
 			//  NOTIFY, UPDATE, IQUERY, STATUS...: NOTIMP (RFC 1035 4.1.1,
 			//  RFC 2136 2.2). They used to be answered as ordinary queries, so
@@ -2328,6 +2352,114 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		Message m = new Message();
 		m.addAnswer(rr);
 		return m.toByteArray().length - Header.LEN;
+	}
+
+	/**
+	 * A dynamic update (RFC 2136). Allowed for requests signed with a key in
+	 * JDns.updateKeys, or from an address in JDns.updateAllow; REFUSED
+	 * otherwise. The changes are appended to the zone's journal (the zone
+	 * file is never rewritten) before the new zone is published; the serial
+	 * goes up and the secondaries get a NOTIFY.
+	 */
+	Message update(QueryData req, Header hdr) {
+		Message reqMsg = req.getMessage();
+		Message ret = new Message();
+		ret.setHeader(hdr);
+		ret.setMessageTypeResponse();
+		Section zs = ZoneUpdater.zoneSection(reqMsg);
+		for(Section s : reqMsg.getQuestion()) {
+			ret.setQuestion(s);
+		}
+		if( zs == null ) {
+			ret.setResponseCodeFormatError();
+			return ret;
+		}
+		String key = req.getTsigKey();
+		boolean allowed = (key != null && updateKeys.contains(key)) || updateAllow.matches(req.getClient());
+		if( !allowed ) {
+			log(() -> "UPDATE of "+zs.getName()+" from "+req.getClient()+" refused: not signed with a key in "+PROP_UPDATE_KEYS+" and not in "+PROP_UPDATE_ALLOW);
+			ret.setResponseCodeRefused();
+			return ret;
+		}
+		synchronized(this) {
+			String zn = zs.getName();
+			Zone zone = getZone(zn.endsWith(".") ? zn.substring(0, zn.length()-1) : zn);
+			if( zone == null || zs.getDnsClass() != zone.getSoa().getDnsClass() ) {
+				ret.getHeader().setRCODE(ZoneUpdater.NOTAUTH);
+				return ret;
+			}
+			ZoneUpdater.Result r;
+			try {
+				r = ZoneUpdater.apply(zone, reqMsg);
+			} catch(RuntimeException ex) {
+				//  e.g. a record the zone file reader can't take: nothing was changed
+				logError("UPDATE of "+zone.getName()+" failed", ex);
+				ret.setResponseCodeServerFailure();
+				return ret;
+			}
+			if( r.changed() ) {
+				try {
+					writeJournal(zone, r.journal, req);
+				} catch(IOException ex) {
+					logError("Can't write the journal of "+zone.getName()+"; the update was not made", ex);
+					ret.setResponseCodeServerFailure();
+					return ret;
+				}
+				publishUpdatedZone(zone, r.zone);
+				final int n = r.journal.size();
+				log(() -> "UPDATE of "+zone.getName()+" from "+req.getClient()+(key == null ? "" : " key "+key)
+						+": "+n+" journal entries, serial "+Integer.toUnsignedString(r.zone.getSoa().getSerial()));
+				ZoneNotifier nf = notifier;
+				if( nf != null ) {
+					nf.notifyZone(r.zone);
+				}
+			}
+			ret.getHeader().setRCODE(r.rcode);
+		}
+		return ret;
+	}
+
+	/** Append the changes to the zone's journal (created with the zone file's serial as its base). */
+	private void writeJournal(Zone zone, List<String> lines, QueryData req) throws IOException {
+		File jnl = zone.getJournalFile();
+		if( jnl == null ) {
+			//  A zone that was not loaded from a file (only kept in memory)
+			return;
+		}
+		boolean create = !jnl.exists();
+		try(FileOutputStream out = new FileOutputStream(jnl, true)) {
+			StringBuilder b = new StringBuilder();
+			if( create ) {
+				b.append("; Dynamic updates of ").append(zone.getName()).append(" (RFC 2136), applied on top of ")
+					.append(zone.getMasterFile().getName()).append(".\n; Edit the zone file and raise its serial to start over.\n");
+				b.append("base ").append(Integer.toUnsignedString(zone.getSoa().getSerial())).append('\n');
+			}
+			b.append("; ").append(new Date()).append(" from ").append(req.getClient());
+			if( req.getTsigKey() != null ) {
+				b.append(" key ").append(req.getTsigKey());
+			}
+			b.append('\n');
+			for(String l : lines) {
+				b.append(l).append('\n');
+			}
+			out.write(b.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+			out.getFD().sync();
+		}
+	}
+
+	/** Replace a zone with its updated version, in one step. */
+	private void publishUpdatedZone(Zone old, Zone updated) {
+		ZoneSet cur = zoneSet;
+		Map<String, Zone> zones = new HashMap<String, Zone>(cur.zones);
+		zones.put(updated.getName().toLowerCase(), updated);
+		Map<String, Zone> byFile = new HashMap<String, Zone>(cur.byFile);
+		for(Map.Entry<String, Zone> e : cur.byFile.entrySet()) {
+			if( e.getValue() == old ) {
+				byFile.put(e.getKey(), updated);
+			}
+		}
+		Zone def = cur.defaultZone == old ? updated : cur.defaultZone;
+		zoneSet = new ZoneSet(Collections.unmodifiableMap(zones), def, Collections.unmodifiableMap(byFile));
 	}
 
 	/** Most SVCB/HTTPS AliasMode records followed for the additional section. */

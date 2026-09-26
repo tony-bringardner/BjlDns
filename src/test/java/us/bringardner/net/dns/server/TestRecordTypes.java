@@ -278,7 +278,8 @@ public class TestRecordTypes {
 
 	@Test
 	public void unsupportedOpcodesGetNotImp() {
-		for(int opcode : new int[] {1 /*IQUERY*/, 2 /*STATUS*/, 4 /*NOTIFY*/, 5 /*UPDATE*/}) {
+		//  (UPDATE, opcode 5, is supported since rec #43: see TestDynamicUpdate)
+		for(int opcode : new int[] {1 /*IQUERY*/, 2 /*STATUS*/, 4 /*NOTIFY*/}) {
 			Message m = ask("www.types.test", DNS.A, opcode);
 			assertEquals(DNS.NOT_IMPLEMENTED, m.getResponseCode(), "opcode "+opcode);
 			assertEquals(0, m.getAnswerCount(), "opcode "+opcode);

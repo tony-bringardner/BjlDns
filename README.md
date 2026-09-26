@@ -13,7 +13,7 @@ The intent of this DNS code is to support a large number of domains with very li
  +  Support Dynamic DNS (DDNS) with trivial configuration
  +  Zone file record types: SOA, NS, A, AAAA, CNAME, PTR, MX, TXT, SPF, HINFO, SRV, CAA, HTTPS, SVCB (other types are passed through unchanged when resolving)
 
-Not supported: incremental zone transfer (IXFR is answered with the whole zone), acting as a secondary (incoming NOTIFY gets NOTIMP), RFC 2136 UPDATE (NOTIMP; dynamic records are managed through the admin port), DNSSEC, and the `$GENERATE` zone file directive.
+Not supported: incremental zone transfer (IXFR is answered with the whole zone), acting as a secondary (incoming NOTIFY gets NOTIMP), DNSSEC, and the `$GENERATE` zone file directive.
 
 # Zone files
 
@@ -26,6 +26,12 @@ Each `<zone>.txt` file in `JDns.zone.dir` is one zone, in the RFC 1035 master fi
  +  TTLs can use units: `300`, `30m`, `1h30m`, `2d`, `1w`.
  +  Parentheses can span lines anywhere in a record, and `;` starts a comment except inside quotes.
  +  A zone file that fails to load is reported with the file name and line number (and the previous version keeps being served).
+
+# Dynamic update (RFC 2136)
+
+Allowed for requests signed with a key in `JDns.updateKeys` (or from `JDns.updateAllow`); everyone else gets REFUSED. Prerequisites, adds and all three kinds of delete are supported, with the RFC's rules (the apex SOA and NS RRset can't be deleted, never the last NS, no other data next to a CNAME). An update is all or nothing.
+
+The zone file is never rewritten. Changes are appended to a journal next to it, `<zone file>.jnl`, before they are served, and replayed on top of the zone file when it is loaded. Each change raises the SOA serial by one and sends NOTIFY to the secondaries. To edit a zone by hand after updates, edit the zone file (it keeps the updates as long as the serial stays the same) or raise its serial to start over: the journal is then renamed `.jnl.old` and not used. Updates can add A, AAAA, NS, CNAME, PTR, MX, TXT, SPF, HINFO, SRV, CAA, HTTPS and SVCB records; other types are REFUSED. A TXT record keeps one string (several strings are joined).
    
  
 Dependencies:  
@@ -97,6 +103,8 @@ A bind address of `localhost` means this host's own name (its network address), 
 | `JDns.tsigKeyFile` | none | A file of TSIG keys, one `name algorithm secret` per line (`#` comments); relative to `JDns.dnsDir`. Keeps the secrets out of the properties file |
 | `JDns.tsigFudge` | 300 | Largest clock difference (seconds, 1-65535) accepted in a signed request; also the fudge used when signing NOTIFY. The window is the smaller of this and the fudge in the request, so a client can't widen it |
 | `JDns.axfrKeys` | none | TSIG key names whose signed requests may transfer zones, from any address |
+| `JDns.updateKeys` | none | TSIG key names whose signed dynamic UPDATE requests (RFC 2136, e.g. `nsupdate -k`) may change zones |
+| `JDns.updateAllow` | none | Addresses / networks allowed to send unsigned UPDATE requests. Prefer `JDns.updateKeys` |
 | `JDns.notifyKey` | none | TSIG key to sign NOTIFY messages with; the secondary's answer must then be signed too |
 | `JDns.notifyRetries` | 5 | Attempts per NOTIFY |
 | `JDns.notifyTimeout` | 2000 | First wait (ms) for a NOTIFY answer, doubled after each attempt |
