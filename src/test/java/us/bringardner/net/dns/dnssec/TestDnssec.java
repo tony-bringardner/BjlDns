@@ -135,6 +135,50 @@ public class TestDnssec {
 		assertEquals(3, Canonical.labelCount("b.a.example."));
 	}
 
+	@Test
+	public void nsec3HashesOfTheRfc5155Example() {
+		//  RFC 5155 Appendix A: salt aabbccdd, 12 iterations
+		Nsec3Params p = Nsec3Params.parse(12, "aabbccdd");
+		assertEquals("0p9mhaveqvm6t7vbl5lop2u3t2rp3tom", p.hashLabel("example"));
+		assertEquals("35mthgpgcu1qg68fab165klnsnk3dpvl", p.hashLabel("a.example"));
+		assertEquals("2t7b4g4vsa5smi47k61mv5bv1a22bojr", p.hashLabel("NS1.Example."));
+		assertEquals("b4um86eghhds6nea196smvmlo4ors995", p.hashLabel("x.w.example"));
+		assertEquals("r53bq7cc2uvmubfu5ocmm6pers9tk9en", p.hashLabel("*.w.example"));
+		assertEquals("1 0 12 AABBCCDD", p.toString());
+		assertEquals("1 0 0 -", Nsec3Params.DEFAULT.toString());
+		assertThrows(IllegalArgumentException.class, () -> Nsec3Params.parse(101, "-"));
+		assertThrows(IllegalArgumentException.class, () -> Nsec3Params.parse(0, "abc"));
+	}
+
+	@Test
+	public void base32HexOfTheRfc4648Vectors() {
+		String [][] v = {{"", ""}, {"f", "co"}, {"fo", "cpng"}, {"foo", "cpnmu"}, {"foob", "cpnmuog"},
+				{"fooba", "cpnmuoj1"}, {"foobar", "cpnmuoj1e8"}};
+		for(String [] x : v) {
+			assertEquals(x[1], us.bringardner.net.dns.Base32Hex.encode(x[0].getBytes(StandardCharsets.US_ASCII)));
+			assertEquals(x[0], new String(us.bringardner.net.dns.Base32Hex.decode(x[1].toUpperCase()+"=="), StandardCharsets.US_ASCII));
+		}
+		assertThrows(IllegalArgumentException.class, () -> us.bringardner.net.dns.Base32Hex.decode("xyz"));
+	}
+
+	@Test
+	public void nsec3RecordsSurviveTheWire() {
+		us.bringardner.net.dns.Nsec3 n = new us.bringardner.net.dns.Nsec3("0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example", DNS.IN);
+		n.setIterations(12);
+		n.setSalt(hex("aabbccdd"));
+		n.setNextHashed(us.bringardner.net.dns.Base32Hex.decode("2t7b4g4vsa5smi47k61mv5bv1a22bojr"));
+		n.setTypes(Arrays.asList(DNS.MX, DNS.DNSKEY, DNS.NS, DNS.SOA, DNS.NSEC3PARAM, DNS.RRSIG));
+		//  As RFC 5155 Appendix A shows it
+		assertEquals("1 0 12 AABBCCDD 2T7B4G4VSA5SMI47K61MV5BV1A22BOJR NS SOA MX RRSIG DNSKEY NSEC3PARAM", n.getRdataAsString());
+		RR back = roundTrip(n);
+		assertTrue(back instanceof us.bringardner.net.dns.Nsec3);
+		assertEquals(n.getRdataAsString(), back.getRdataAsString());
+		us.bringardner.net.dns.Nsec3param p = new us.bringardner.net.dns.Nsec3param("example", DNS.IN);
+		p.setIterations(12);
+		p.setSalt(hex("aabbccdd"));
+		assertEquals("1 0 12 AABBCCDD", roundTrip(p).getRdataAsString());
+	}
+
 	// ------------------------------------------------------------ records
 
 	private static RR roundTrip(RR rr) {

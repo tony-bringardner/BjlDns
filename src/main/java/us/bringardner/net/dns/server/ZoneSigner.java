@@ -34,12 +34,16 @@ import java.util.TreeMap;
 import us.bringardner.net.dns.DNS;
 import us.bringardner.net.dns.Dnskey;
 import us.bringardner.net.dns.Name;
+import us.bringardner.net.dns.Base32Hex;
 import us.bringardner.net.dns.Nsec;
+import us.bringardner.net.dns.Nsec3;
+import us.bringardner.net.dns.Nsec3param;
 import us.bringardner.net.dns.RR;
 import us.bringardner.net.dns.Rrsig;
 import us.bringardner.net.dns.Soa;
 import us.bringardner.net.dns.dnssec.Canonical;
 import us.bringardner.net.dns.dnssec.DnssecKey;
+import us.bringardner.net.dns.dnssec.Nsec3Params;
 
 /**
  * Signs a zone (DNSSEC, RFC 4033-4035): adds the DNSKEY set at the apex and
@@ -103,6 +107,15 @@ public final class ZoneSigner {
 	 */
 	static Result sign(Zone unsigned, Map<String, List<? extends RR>> dynamic, String dynamicFingerprint,
 			List<DnssecKey> keys, long now, int validity) {
+		return sign(unsigned, dynamic, dynamicFingerprint, keys, now, validity, null);
+	}
+
+	/**
+	 * Sign a zone, proving what does not exist with NSEC3 (RFC 5155) when
+	 * nsec3 is not null, with NSEC otherwise.
+	 */
+	static Result sign(Zone unsigned, Map<String, List<? extends RR>> dynamic, String dynamicFingerprint,
+			List<DnssecKey> keys, long now, int validity, Nsec3Params nsec3) {
 		List<String> warnings = new ArrayList<String>();
 		String apex = Canonical.key(unsigned.getName());
 		Soa soa = unsigned.getSoa();
@@ -188,11 +201,15 @@ public final class ZoneSigner {
 			}
 		}
 
-		//  The NSEC chain, in canonical order
+		//  The NSEC chain, in canonical order (or the NSEC3 chain)
 		int nsecTtl = Math.min(soa.getTTL(), soa.getMinimum());
 		TreeMap<String, Nsec> chain = new TreeMap<String, Nsec>(Canonical.NAME_ORDER);
 		List<RR> nsecs = new ArrayList<RR>();
-		for(int i=0; i < auth.size(); i++ ) {
+		TreeMap<String, Nsec3> hashed = null;
+		if( nsec3 != null ) {
+			hashed = nsec3Chain(sets, auth, cuts, apex, soa, nsecTtl, nsec3, nsecs);
+		}
+		for(int i=0; nsec3 == null && i < auth.size(); i++ ) {
 			String n = auth.get(i);
 			String next = i+1 < auth.size() ? auth.get(i+1) : apex;
 			List<Integer> types = new ArrayList<Integer>();
@@ -239,8 +256,19 @@ public final class ZoneSigner {
 				sigs.put(SignedZone.sigKey(n, type), list);
 			}
 		}
+		if( hashed != null ) {
+			for(Nsec3 r : hashed.values()) {
+				List<Rrsig> list = new ArrayList<Rrsig>();
+				for(DnssecKey k : zoneSigners) {
+					list.add(Canonical.sign(r.getName(), java.util.Collections.singletonList(r), r.getTTL(), k, inception, expiration));
+					count++;
+				}
+				sigs.put(SignedZone.sigKey(r.getName(), DNS.NSEC3), list);
+			}
+		}
 
-		//  The zone to serve: the unsigned records plus DNSKEY and NSEC
+		//  The zone to serve: the unsigned records plus DNSKEY and NSEC (or
+		//  NSEC3PARAM: the NSEC3 records are not names of the zone, RFC 5155 7.2.9)
 		Zone ret = unsigned.copyForUpdate();
 		List<RR> extra = new ArrayList<RR>(dnskeys);
 		extra.addAll(nsecs);
@@ -250,9 +278,73 @@ public final class ZoneSigner {
 			next = Math.min(next, k.nextEvent(now));
 		}
 		long refresh = Math.min(expiration - validity/4, next);
-		ret.setSigned(new SignedZone(unsigned, apex, sigs, chain, now, expiration, refresh,
+		ret.setSigned(new SignedZone(unsigned, apex, sigs, auth, chain, hashed, nsec3, now, expiration, refresh,
 				keyId(keys, now), dynamicFingerprint, count));
 		return new Result(ret, warnings);
+	}
+
+	/**
+	 * The NSEC3 chain (RFC 5155 7.1): a record for every name that owns
+	 * records and every empty non-terminal, owned by the hash of the name,
+	 * in hash order. No opt-out. Adds the NSEC3PARAM to the apex (to sets
+	 * and to extra).
+	 */
+	private static TreeMap<String, Nsec3> nsec3Chain(TreeMap<String, TreeMap<Integer, List<RR>>> sets, List<String> auth,
+			Set<String> cuts, String apex, Soa soa, int ttl, Nsec3Params p, List<RR> extra) {
+		Nsec3param param = new Nsec3param(apex, soa.getDnsClass());
+		param.setIterations(p.getIterations());
+		param.setSalt(p.getSalt());
+		//  (TTL 0, as other signers use)
+		param.setTTL(0);
+		add(sets, apex, param);
+		extra.add(param);
+
+		Set<String> owners = new HashSet<String>(auth);
+		List<String> all = new ArrayList<String>(auth);
+		for(String n : auth) {
+			String a = n;
+			while( !a.equals(apex) ) {
+				a = a.substring(a.indexOf('.')+1);
+				if( owners.add(a) ) {
+					all.add(a);
+				}
+			}
+		}
+		TreeMap<String, Nsec3> hashed = new TreeMap<String, Nsec3>();
+		for(String n : all) {
+			String label = p.hashLabel(n);
+			List<Integer> types = new ArrayList<Integer>();
+			TreeMap<Integer, List<RR>> at = sets.get(n);
+			if( at != null ) {
+				boolean cut = cuts.contains(n);
+				for(int t : at.keySet()) {
+					if( !cut || t == DNS.NS || t == DNS.DS ) {
+						types.add(t);
+					}
+				}
+				//  Signatures exist at the name unless it is a delegation without DS
+				if( !cut || at.containsKey(DNS.DS) ) {
+					types.add(DNS.RRSIG);
+				}
+			}
+			Nsec3 r = new Nsec3(label+"."+apex, soa.getDnsClass());
+			r.setTTL(ttl);
+			r.setIterations(p.getIterations());
+			r.setSalt(p.getSalt());
+			r.setTypes(types);
+			if( hashed.put(label, r) != null ) {
+				throw new IllegalStateException("NSEC3 hash collision in "+apex+" (change the salt)");
+			}
+		}
+		Nsec3 prev = null;
+		for(Map.Entry<String, Nsec3> e : hashed.entrySet()) {
+			if( prev != null ) {
+				prev.setNextHashed(Base32Hex.decode(e.getKey()));
+			}
+			prev = e.getValue();
+		}
+		prev.setNextHashed(Base32Hex.decode(hashed.firstKey()));
+		return hashed;
 	}
 
 	private static void add(TreeMap<String, TreeMap<Integer, List<RR>>> sets, String name, RR rr) {

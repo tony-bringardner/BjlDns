@@ -164,6 +164,8 @@ public  class RR extends Section
 		case DNSKEY:	ret = new Dnskey(sec);break;
 		case RRSIG:	ret = new Rrsig(sec);break;
 		case NSEC:	ret = new Nsec(sec);break;
+		case NSEC3:	ret = new Nsec3(sec);break;
+		case NSEC3PARAM:	ret = new Nsec3param(sec);break;
 
 		//  This is to prevent the log file from filling with unsupported errors
 		case OPT	: ret = new RR(sec);break;

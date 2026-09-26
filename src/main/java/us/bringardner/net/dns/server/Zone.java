@@ -293,6 +293,7 @@ public class Zone implements DNS {
 		case RRSIG:
 		case NSEC:
 		case NSEC3:
+		case NSEC3PARAM:
 			throw new IllegalArgumentException(Utility.TYPENAMES[type]+" records are made by the server when it signs the zone"
 					+" (keys in JDns.dnssecKeyDir); remove them from the zone file");
 

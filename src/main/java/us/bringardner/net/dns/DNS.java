@@ -292,6 +292,7 @@ public interface DNS {
 		static final int NSEC  = 47;  // Next secure (RFC 4034, DNSSEC)
 		static final int DNSKEY= 48;  // Zone key (RFC 4034, DNSSEC)
 		static final int NSEC3 = 50;  // Hashed next secure (RFC 5155)
+		static final int NSEC3PARAM = 51;  // NSEC3 parameters (RFC 5155)
 		static final int SVCB  = 64;  // Service binding (RFC 9460)
 		static final int HTTPS = 65;  // Service binding for HTTPS (RFC 9460)
 		static final int CAA   = 257; // Certification Authority Authorization (RFC 8659)
