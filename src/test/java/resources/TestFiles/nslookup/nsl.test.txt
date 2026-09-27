@@ -22,7 +22,7 @@ v6only	IN	AAAA	2001:db8::6
 multi	IN	A	10.1.0.2
 multi	IN	A	10.1.0.3
 alias	IN	CNAME	www
-txt	IN	TXT	"hello world"
+txt	IN	TXT	"hello world" "second"
 _sip._tcp	IN	SRV	10 60 5060 sip
 sip	IN	A	10.1.0.60
 hinfo	IN	HINFO	"PC" "Linux"

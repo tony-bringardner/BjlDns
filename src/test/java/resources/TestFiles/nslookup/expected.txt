@@ -120,7 +120,7 @@ exit: 0
 Server:		127.0.0.1
 Address:	127.0.0.1#${PORT}
 
-txt.nsl.test	text = "hello world"
+txt.nsl.test	text = "hello world" "second"
 
 === srv
 args: -type=srv _sip._tcp.nsl.test 127.0.0.1
@@ -156,6 +156,14 @@ exit: 0
 Server:		127.0.0.1
 Address:	127.0.0.1#${PORT}
 
+nsl.test
+	origin = ns1.nsl.test
+	mail addr = hostmaster.nsl.test
+	serial = 2026092601
+	refresh = 7200
+	retry = 900
+	expire = 1209600
+	minimum = 300
 nsl.test	nameserver = ns1.nsl.test.
 nsl.test	nameserver = ns2.nsl.test.
 nsl.test	mail exchanger = 10 mail.nsl.test.

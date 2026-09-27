@@ -2001,6 +2001,26 @@ public class DnsServer  extends DnsBaseClass implements Runnable
             not the node with the "*" label.  Go to step 6.
 
 	 */
+	/**
+	 * The zone's SOA as the answer for 'targetName': for a domain served by
+	 * the default (common) zone it gets that domain's name.
+	 */
+	private static Soa soaFor(Zone zone, Name targetName) {
+		Soa soa = zone.getSoa();
+		RR realrr = soa.copy();
+		realrr.replaceWildCards(targetName);
+		String domain = soa.getName();
+		String target = targetName.toString();
+
+		// Set the SOA info to the hosted name
+		if( !domain.equals(target)){
+			//  must be common
+			((Soa)realrr).setName(target);
+			((Soa)realrr).setRname("postmaster."+target);
+		}
+		return (Soa)realrr;
+	}
+
 	private Message step3(QueryData query, Message ret, Zone zone)
 	{
 
@@ -2045,22 +2065,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		boolean signedName = zone.getSigned() != null && zone.contains(target);
 		if( type == DNS.SOA && !(signedName && !zone.isApex(target)) ) {
 			Soa soa = zone.getSoa();
-			RR realrr = soa.copy();
-			realrr.replaceWildCards(targetName);			
-			ret.addAnswer(realrr);
-			String domain = soa.getName();
-			target = targetName.toString();
-
-			// Set the SOA info to the hosted name
-			if( !domain.equals(target)){
-				//String postMaster = soa.getMname();
-				//  must be common
-				((Soa)realrr).setName(target);
-				((Soa)realrr).setRname("postmaster."+target);
-			}
+			ret.addAnswer(soaFor(zone, targetName));
 			//  (MNAME and RNAME used to be swapped in Soa; see Soa.toByteArray)
 			String dnsServer = soa.getMname();
-			realrr = zone.getMatchingRR(dnsServer,DNS.A);
+			RR realrr = zone.getMatchingRR(dnsServer,DNS.A);
 			if( realrr != null ) {
 				ret.addAdditional(realrr);
 			}
@@ -2080,6 +2088,16 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		if( list == null ) {
 			//  No dynamic entry then do a normal search.
 			list = zone.getMatchingRRs(targetName);
+		}
+		//  ANY at the apex includes the SOA (the zone keeps it apart from the
+		//  other records, so it was left out); the apex exists even when the
+		//  SOA is its only record
+		boolean apexAny = type == DNS.QTYPE_ALL && isZoneApex(target, zone) && !dynamic.containsKey(target);
+		if( apexAny ) {
+			ret.addAnswer(soaFor(zone, targetName));
+			if( list == null ) {
+				list = new ArrayList<RR>();
+			}
 		}
 		//System.out.println(target+" list 2="+list1);
 		if( list == null ) {

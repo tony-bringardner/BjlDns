@@ -265,7 +265,7 @@ public class Zone implements DNS {
 		case TXT:
 			Txt txt = new Txt(rrName,dnsClass);
 			rr = txt;
-			txt.setText((String)list.get(3));
+			txt.setStrings(characterStrings(list, 3));
 			break;
 
 		case AAAA:	rr = new AAAA(rrName,dnsClass);
@@ -340,7 +340,7 @@ public class Zone implements DNS {
 
 		case SPF: Spf spf = new Spf(rrName,dnsClass);
 		rr = spf;
-		spf.setText((String)list.get(3));
+		spf.setStrings(characterStrings(list, 3));
 		break;
 
 		case MD:
@@ -724,8 +724,13 @@ public class Zone implements DNS {
 
 					while(pos<b.length && !Character.isWhitespace((char)b[pos]) ) {
 						if( (char)b[pos] == '"') {
-							//  Read everything between quotes
+							//  Read everything between quotes. A backslash escape
+							//  (\" \\ \DDD) is kept as it is, for the record type to
+							//  decode (an escaped quote used to end the string)
 							while(++pos < b.length && (char)b[pos] != '"') {
+								if( (char)b[pos] == '\\' && pos+1 < b.length ) {
+									buf.append((char)b[pos++]);
+								}
 								buf.append((char)b[pos]);
 							}
 							++pos;
@@ -1268,12 +1273,71 @@ public class Zone implements DNS {
 		}
 	}
 
+	/**
+	 * The character-strings of a TXT/SPF line, from field 'first' on: each
+	 * field is one string ("a" "b" is two; a line used to keep only the
+	 * first), with its escapes decoded (\X is X, \DDD the byte DDD); the
+	 * bytes are UTF-8.
+	 */
+	static List<String> characterStrings(List<String> fields, int first) {
+		if( fields.size() <= first ) {
+			throw new IllegalArgumentException("no text");
+		}
+		List<String> ret = new ArrayList<String>();
+		for(String f : fields.subList(first, fields.size())) {
+			java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+			for(int i=0; i < f.length(); i++ ) {
+				char c = f.charAt(i);
+				if( c == '\\' && i+1 < f.length() ) {
+					if( i+3 < f.length() && Character.isDigit(f.charAt(i+1)) && Character.isDigit(f.charAt(i+2)) && Character.isDigit(f.charAt(i+3)) ) {
+						int v = Integer.parseInt(f.substring(i+1, i+4));
+						if( v > 255 ) {
+							throw new IllegalArgumentException("bad escape \\"+f.substring(i+1, i+4));
+						}
+						bytes.write(v);
+						i += 3;
+						continue;
+					}
+					c = f.charAt(++i);
+				}
+				//  (the reader gives one char per byte of the line)
+				bytes.write(c & 0xff);
+			}
+			ret.add(new String(bytes.toByteArray(), java.nio.charset.StandardCharsets.UTF_8));
+		}
+		return ret;
+	}
+
+	/** A character-string for a zone file: quoted, with '"', '\\' and control characters escaped. */
+	static String quoteString(String s) {
+		StringBuilder sb = new StringBuilder("\"");
+		for(int i=0; i < s.length(); i++ ) {
+			char c = s.charAt(i);
+			if( c == '"' || c == '\\' ) {
+				sb.append('\\').append(c);
+			} else if( c < 0x20 || c == 0x7f ) {
+				sb.append('\\').append(String.format("%03d", (int)c));
+			} else {
+				sb.append(c);
+			}
+		}
+		return sb.append('"').toString();
+	}
+
 	/** A record's data as zone file text (quoted where the reader needs it). */
 	public static String rdataText(RR rr) {
 		switch(rr.getType()) {
 		case TXT:
-		case SPF:
-			return quote(((Txt)rr).getText());
+		case SPF: {
+			StringBuilder sb = new StringBuilder();
+			for(String str : ((Txt)rr).getStrings()) {
+				if( sb.length() > 0 ) {
+					sb.append(' ');
+				}
+				sb.append(quoteString(str));
+			}
+			return sb.toString();
+		}
 		case HINFO:
 			return quote(((us.bringardner.net.dns.Hinfo)rr).getCpu())+" "+quote(((us.bringardner.net.dns.Hinfo)rr).getOs());
 		default:

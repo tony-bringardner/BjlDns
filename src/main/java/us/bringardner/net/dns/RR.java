@@ -151,6 +151,7 @@ public  class RR extends Section
 		case SOA   : ret = new Soa(sec);break;
 		case PTR   : ret = new Ptr(sec);break;
 		case TXT   : ret = new Txt(sec);break;
+		case SPF   : ret = new Spf(sec);break;
 		case HINFO : ret = new Hinfo(sec);break;
 		case MX    : ret = new Mx(sec);break;
 		case RP    : ret = new Rp(sec);break;
