@@ -80,6 +80,32 @@ Dependencies:
 + BjlIo
  			
 
+# NsLookup
+
+`us.bringardner.net.dns.util.NsLookup` works like the Linux (ISC BIND 9) `nslookup`: the same command line, interactive commands, options, output and exit status. Its output was checked line by line against `nslookup` 9.18 (`TestNsLookupOffline` replays the recorded output).
+
+```
+java -cp bjl_dns.jar:bjl_core.jar:bjl_io.jar us.bringardner.net.dns.util.NsLookup [-option ...] [host [server]]
+java ... NsLookup -type=mx example.com 192.0.2.53
+java ... NsLookup -port=5353 -debug www.example.com 127.0.0.1
+java ... NsLookup 192.0.2.1              # an address: its PTR record
+java ... NsLookup - 127.0.0.1            # interactive, using 127.0.0.1
+```
+
++ **Default server**: the `nameserver` lines of `/etc/resolv.conf` (another file with `-DJDns.resolvConf=path`), tried in order; its `search`/`domain` list and `options ndots: timeout: attempts:` are used too. Without a resolv.conf (Windows) the servers Java finds for the platform are used, and as a last resort a root server.
++ **Lookups**: with no type set, a name gets A and AAAA lookups (following CNAMEs), as `nslookup` does. An IPv4 or IPv6 address is looked up as its `in-addr.arpa` / `ip6.arpa` PTR name. Names with fewer dots than `ndots` try the search list first, then the name itself; a trailing dot means the name as is.
++ **Interactive commands**: `NAME [SERVER]`, `server NAME`, `lserver NAME`, `set OPTION`, `help` or `?`, `exit` (or `quit`).
++ **Options** (`set OPTION`, or `-OPTION` on the command line; like `nslookup`, a unique prefix works, e.g. `set deb`, `-q=mx`): `all`, `type=` (`querytype=`), `class=`, `domain=`, `srchlist=a/b/c`, `port=`, `timeout=` (seconds), `retry=`, `ndots=`, `[no]debug`, `[no]d2`, `[no]recurse`, `[no]search` (`[no]defname`), `[no]vc` (TCP; ANY queries use TCP unless `novc` is set), `[no]fail` (`nofail`: try the next server after SERVFAIL).
++ **Exit status**: 1 if a lookup failed (an error answer such as NXDOMAIN, or no server could be reached), else 0.
+
+Differences from `nslookup`: `help` prints the commands (nslookup says it is not implemented), `quit` exits (nslookup looks up the host "quit"), `srchlist=` is accepted (from the older nslookup), `d2` turns on BjlDns debug logging, and `NAME SERVER` works in interactive mode (as the nslookup manual says; BIND 9 ignores the server there). `ls`, `finger`, `root` and `view` are not implemented, as in BIND 9.
+
+| Property | Default | Meaning |
+|---|---|---|
+| `JDns.resolvConf` | `/etc/resolv.conf` | The resolv.conf NsLookup reads its default servers, search list and options from |
+
+The old options `-s SERVER` and `-p PORT` are gone: use `nslookup host SERVER` and `-port=PORT`. The old `set debug=y`, `set recurse y` and `set udp` forms are replaced by `set debug` / `set nodebug`, `set recurse` / `set norecurse` and `set novc`.
+
 # Running in production
 
 Run the server under a supervisor (systemd, launchd, a container runtime) that restarts it when it stops, and let the JVM exit on fatal errors instead of limping on:

@@ -1,0 +1,456 @@
+# Expected nslookup output, recorded from ISC nslookup 9.18.39 (Ubuntu 24.04) run against
+# BjlDns serving nsl.test.txt and the two reverse zones in this directory (TestNsLookupOffline).
+# Each case: '=== name', 'args:' (after -port=PORT), 'stdin:' (\n = new line), 'exit:', '---', then the output.
+# ${PORT} stands for the server's port.
+=== defaultLookup
+args: www.nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+Name:	www.nsl.test
+Address: 10.1.0.80
+Name:	www.nsl.test
+Address: 2001:db8::80
+
+=== twoAddresses
+args: multi.nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+Name:	multi.nsl.test
+Address: 10.1.0.2
+Name:	multi.nsl.test
+Address: 10.1.0.3
+
+=== cnameThenAaaa
+args: alias.nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+alias.nsl.test	canonical name = www.nsl.test.
+Name:	www.nsl.test
+Address: 10.1.0.80
+Name:	www.nsl.test
+Address: 2001:db8::80
+
+=== aaaaOnly
+args: v6only.nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+Name:	v6only.nsl.test
+Address: 2001:db8::6
+
+=== aOnly
+args: mail.nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+Name:	mail.nsl.test
+Address: 10.1.0.25
+
+=== noAddress
+args: caa.nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+*** Can't find caa.nsl.test: No answer
+
+=== nxdomain
+args: nope.nsl.test 127.0.0.1
+exit: 1
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+** server can't find nope.nsl.test: NXDOMAIN
+
+=== mx
+args: -type=mx nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+nsl.test	mail exchanger = 10 mail.nsl.test.
+nsl.test	mail exchanger = 20 mail2.nsl.test.
+
+=== ns
+args: -type=ns nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+nsl.test	nameserver = ns1.nsl.test.
+nsl.test	nameserver = ns2.nsl.test.
+
+=== soa
+args: -type=soa nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+nsl.test
+	origin = ns1.nsl.test
+	mail addr = hostmaster.nsl.test
+	serial = 2026092601
+	refresh = 7200
+	retry = 900
+	expire = 1209600
+	minimum = 300
+
+=== txt
+args: -type=txt txt.nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+txt.nsl.test	text = "hello world"
+
+=== srv
+args: -type=srv _sip._tcp.nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+_sip._tcp.nsl.test	service = 10 60 5060 sip.nsl.test.
+
+=== hinfo
+args: -q=hinfo hinfo.nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+hinfo.nsl.test	hinfo = "PC" "Linux"
+
+=== caa
+args: -type=caa caa.nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+caa.nsl.test	rdata_257 = 0 issue "letsencrypt.org"
+
+=== any
+args: -type=any nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+nsl.test	nameserver = ns1.nsl.test.
+nsl.test	nameserver = ns2.nsl.test.
+nsl.test	mail exchanger = 10 mail.nsl.test.
+nsl.test	mail exchanger = 20 mail2.nsl.test.
+nsl.test	text = "v=spf1 -all"
+Name:	nsl.test
+Address: 10.1.0.1
+
+=== noAnswer
+args: -type=mx www.nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+*** Can't find www.nsl.test: No answer
+
+=== reverse4
+args: 10.1.0.80 127.0.0.1
+exit: 0
+---
+80.0.1.10.in-addr.arpa	name = www.nsl.test.
+
+=== reverse6
+args: 2001:db8::80 127.0.0.1
+exit: 0
+---
+0.8.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa	name = www.nsl.test.
+
+=== reverseMissing
+args: 10.1.0.81 127.0.0.1
+exit: 1
+---
+** server can't find 81.0.1.10.in-addr.arpa: NXDOMAIN
+
+=== reverseTyped
+args: -type=ptr 10.1.0.80 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+80.0.1.10.in-addr.arpa	name = www.nsl.test.
+
+=== referral
+args: -type=ns sub.nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+Non-authoritative answer:
+*** Can't find sub.nsl.test: No answer
+
+Authoritative answers can be found from:
+sub.nsl.test	nameserver = ns.sub.nsl.test.
+ns.sub.nsl.test	internet address = 10.1.0.99
+
+=== referralA
+args: host.sub.nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+Non-authoritative answer:
+*** Can't find host.sub.nsl.test: No answer
+
+=== debug
+args: -debug www.nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+------------
+    QUESTIONS:
+	www.nsl.test, type = A, class = IN
+    ANSWERS:
+    ->  www.nsl.test
+	internet address = 10.1.0.80
+	ttl = 3600
+    AUTHORITY RECORDS:
+    ADDITIONAL RECORDS:
+------------
+Name:	www.nsl.test
+Address: 10.1.0.80
+------------
+    QUESTIONS:
+	www.nsl.test, type = AAAA, class = IN
+    ANSWERS:
+    ->  www.nsl.test
+	has AAAA address 2001:db8::80
+	ttl = 3600
+    AUTHORITY RECORDS:
+    ADDITIONAL RECORDS:
+------------
+Name:	www.nsl.test
+Address: 2001:db8::80
+
+=== debugNx
+args: -q=a -debug nope.nsl.test 127.0.0.1
+exit: 1
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+------------
+    QUESTIONS:
+	nope.nsl.test, type = A, class = IN
+    ANSWERS:
+    AUTHORITY RECORDS:
+    ->  nsl.test
+	origin = ns1.nsl.test
+	mail addr = hostmaster.nsl.test
+	serial = 2026092601
+	refresh = 7200
+	retry = 900
+	expire = 1209600
+	minimum = 300
+	ttl = 300
+    ADDITIONAL RECORDS:
+------------
+** server can't find nope.nsl.test: NXDOMAIN
+
+=== searchList
+args: -domain=nsl.test www 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+Name:	www.nsl.test
+Address: 10.1.0.80
+Name:	www.nsl.test
+Address: 2001:db8::80
+
+=== searchThenAsIs
+args: -domain=nsl.test nope 127.0.0.1
+exit: 1
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+** server can't find nope: REFUSED
+
+=== absoluteName
+args: -domain=nsl.test www. 127.0.0.1
+exit: 1
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+** server can't find www: REFUSED
+
+=== searchStopsAtNoData
+args: -domain=nsl.test -type=mx www 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+*** Can't find www: No answer
+
+=== namesLikeCommands
+args: -type=a 3com.nsl.test 127.0.0.1
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+Name:	3com.nsl.test
+Address: 10.1.0.33
+
+=== truncatedRetriedOverTcp
+args: -type=txt big.nsl.test 127.0.0.1
+exit: 0
+---
+;; Truncated, retrying in TCP mode.
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+big.nsl.test	text = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx1"
+big.nsl.test	text = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx2"
+big.nsl.test	text = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx3"
+big.nsl.test	text = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx4"
+big.nsl.test	text = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx5"
+big.nsl.test	text = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx6"
+big.nsl.test	text = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx7"
+big.nsl.test	text = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx8"
+big.nsl.test	text = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx9"
+big.nsl.test	text = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx10"
+big.nsl.test	text = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx11"
+big.nsl.test	text = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx12"
+
+=== unknownType
+args: -type=bogus www.nsl.test 127.0.0.1
+exit: 0
+---
+unknown query type: bogus
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+Name:	www.nsl.test
+Address: 10.1.0.80
+Name:	www.nsl.test
+Address: 2001:db8::80
+
+=== invalidOption
+args: -foo -type=a www.nsl.test 127.0.0.1
+exit: 0
+---
+*** Invalid option: foo
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+Name:	www.nsl.test
+Address: 10.1.0.80
+
+=== setAll
+args: - 127.0.0.1
+stdin: set all\n
+exit: 1
+---
+Default server: 127.0.0.1
+Address: 127.0.0.1#${PORT}
+
+Set options:
+  novc			nodebug		nod2
+  search		recurse
+  timeout = 2		retry = 3	port = ${PORT}	ndots = 1
+  querytype = A       	class = IN
+  srchlist = 
+
+=== session
+args: -domain=nsl.test - 127.0.0.1
+stdin: www\nset type=mx\nnsl.test\nset type=bogus\nset foo\nserver 127.0.0.1\nls nsl.test\nset nodebug\nexit\n
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+Name:	www.nsl.test
+Address: 10.1.0.80
+Name:	www.nsl.test
+Address: 2001:db8::80
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+nsl.test	mail exchanger = 10 mail.nsl.test.
+nsl.test	mail exchanger = 20 mail2.nsl.test.
+unknown query type: bogus
+*** Invalid option: foo
+Default server: 127.0.0.1
+Address: 127.0.0.1#${PORT}
+The 'ls' command is not implemented.
+
+=== setOptions
+args: - 127.0.0.1
+stdin: set domain=x.test\nset nosearch\nset norec\nset vc\nset deb\nset ret=5\nset t=7\nset ndots=2\nset cl=HS\nset q=TXT\nset all\n
+exit: 1
+---
+Default server: 127.0.0.1
+Address: 127.0.0.1#${PORT}
+
+Set options:
+  vc			debug		nod2
+  nosearch		norecurse
+  timeout = 7		retry = 5	port = ${PORT}	ndots = 2
+  querytype = TXT     	class = HS
+  srchlist = x.test
+
+=== commandLikeNames
+args: - 127.0.0.1
+stdin: set type=a\nsettings.nsl.test\nservers.nsl.test\nall.nsl.test\n3com.nsl.test\n
+exit: 0
+---
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+Name:	settings.nsl.test
+Address: 10.1.0.44
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+Name:	servers.nsl.test
+Address: 10.1.0.45
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+Name:	all.nsl.test
+Address: 10.1.0.46
+Server:		127.0.0.1
+Address:	127.0.0.1#${PORT}
+
+Name:	3com.nsl.test
+Address: 10.1.0.33
+

@@ -1,0 +1,47 @@
+$TTL 3600
+@	IN	SOA	ns1.nsl.test. hostmaster.nsl.test. (
+			2026092601 ; serial
+			7200 ; refresh
+			900 ; retry
+			1209600 ; expire
+			300 ) ; minimum
+	IN	NS	ns1
+	IN	NS	ns2
+	IN	MX	10 mail
+	IN	MX	20 mail2
+	IN	TXT	"v=spf1 -all"
+	IN	A	10.1.0.1
+ns1	IN	A	10.1.0.53
+ns2	IN	A	10.1.0.54
+ns1	IN	AAAA	2001:db8::53
+mail	IN	A	10.1.0.25
+mail2	IN	A	10.1.0.26
+www	IN	A	10.1.0.80
+www	IN	AAAA	2001:db8::80
+v6only	IN	AAAA	2001:db8::6
+multi	IN	A	10.1.0.2
+multi	IN	A	10.1.0.3
+alias	IN	CNAME	www
+txt	IN	TXT	"hello world"
+_sip._tcp	IN	SRV	10 60 5060 sip
+sip	IN	A	10.1.0.60
+hinfo	IN	HINFO	"PC" "Linux"
+caa	IN	CAA	0 issue "letsencrypt.org"
+3com	IN	A	10.1.0.33
+settings	IN	A	10.1.0.44
+servers	IN	A	10.1.0.45
+all	IN	A	10.1.0.46
+sub	IN	NS	ns.sub
+ns.sub	IN	A	10.1.0.99
+big	IN	TXT	"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx1"
+big	IN	TXT	"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx2"
+big	IN	TXT	"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx3"
+big	IN	TXT	"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx4"
+big	IN	TXT	"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx5"
+big	IN	TXT	"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx6"
+big	IN	TXT	"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx7"
+big	IN	TXT	"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx8"
+big	IN	TXT	"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx9"
+big	IN	TXT	"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx10"
+big	IN	TXT	"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx11"
+big	IN	TXT	"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx12"

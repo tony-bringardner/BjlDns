@@ -53,6 +53,11 @@ public class Hinfo extends RR {
 		public Hinfo(RR rr) {
 				super(rr);
 				isBase = false;
+				//  super(rr) parsed cpu/os (setFromRdata), but the field
+				//  initializers above run after it and reset them to "", so a
+				//  HINFO from the wire always read as empty. Parse again.
+				setFromRdata();
+				dirty = false;
 		}
 public RR copy()
 {
