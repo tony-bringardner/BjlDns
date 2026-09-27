@@ -23,7 +23,7 @@
  *
  * ~version~V000.01.04-V000.00.05-V000.00.04-V000.00.02-V000.00.01-V000.00.00-
  */
-package us.bringardner.net.dns;
+package us.bringardner.net.dns.util;
 
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -43,8 +43,6 @@ import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
-
-import us.bringardner.net.dns.util.NsLookup;
 
 /**
  * Live test: runs this machine's nslookup and NsLookup on the same lookups

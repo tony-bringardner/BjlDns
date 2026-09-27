@@ -34,7 +34,6 @@ import java.util.function.Function;
 import us.bringardner.net.dns.Cname;
 import us.bringardner.net.dns.DNS;
 import us.bringardner.net.dns.Message;
-import us.bringardner.net.dns.Nsec;
 import us.bringardner.net.dns.Nsec3;
 import us.bringardner.net.dns.RR;
 import us.bringardner.net.dns.Rrsig;

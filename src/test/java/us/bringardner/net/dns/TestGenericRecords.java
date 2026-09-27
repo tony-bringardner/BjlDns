@@ -37,7 +37,6 @@ public class TestGenericRecords {
 
 	/** A response with an A record, a CAA (257) and an SRV (33) record, built as raw wire bytes. */
 	private static byte [] wire() {
-		ByteBuffer b = new ByteBuffer();
 		Message m = new Message();
 		m.setQuestion("example.test", 257, DNS.IN);
 		m.setMessageTypeResponse();

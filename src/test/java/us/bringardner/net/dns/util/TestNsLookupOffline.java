@@ -20,7 +20,7 @@
  *
  *	@author Tony Bringardner
  */
-package us.bringardner.net.dns;
+package us.bringardner.net.dns.util;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -46,12 +46,15 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import us.bringardner.net.dns.ByteBuffer;
+import us.bringardner.net.dns.DNS;
+import us.bringardner.net.dns.Hinfo;
+import us.bringardner.net.dns.Message;
+import us.bringardner.net.dns.RR;
 import us.bringardner.net.dns.server.DnsServer;
 import us.bringardner.net.dns.server.TCPProsessor;
 import us.bringardner.net.dns.server.UDPProsessor;
 import us.bringardner.net.dns.server.Zone;
-import us.bringardner.net.dns.util.NsLookup;
-import us.bringardner.net.dns.util.NsLookupAccess;
 
 /**
  * NsLookup against a DnsServer on the loopback, so it runs without the
