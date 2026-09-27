@@ -51,7 +51,8 @@ import us.bringardner.net.dns.resolve.QueryData;
 
 /**
  * TXT records keep all their character-strings (a zone file line kept only
- * the first), and ANY at a zone apex includes the SOA (it was left out).
+ * the first), ANY at a zone apex includes the SOA (it was left out), and
+ * only the apex answers an SOA query.
  */
 public class TestTxtStringsAndAny {
 
@@ -198,6 +199,23 @@ public class TestTxtStringsAndAny {
 		Message m = ask("www.txt.test", DNS.QTYPE_ALL);
 		assertEquals(1, m.getAnswerCount(), m.getAnswer().toString());
 		assertEquals(DNS.A, m.getAnswer().get(0).getType());
+	}
+
+	@Test
+	public void soaOnlyAtTheApex() {
+		//  An SOA query for a name below the apex gets NODATA (or NXDOMAIN) with
+		//  the zone's SOA in the authority section; it used to get an SOA named
+		//  after itself, so nsupdate took www.txt.test for a zone
+		Message m = ask("www.txt.test", DNS.SOA);
+		assertEquals(DNS.NOERROR, m.getResponseCode());
+		assertEquals(0, m.getAnswerCount());
+		assertEquals("txt.test", m.getAuthority().get(0).getName());
+		assertEquals(DNS.SOA, m.getAuthority().get(0).getType());
+		m = ask("nope.txt.test", DNS.SOA);
+		assertEquals(DNS.NAME_ERROR, m.getResponseCode());
+		assertEquals("txt.test", m.getAuthority().get(0).getName());
+		m = ask("txt.test", DNS.SOA);
+		assertEquals("txt.test", m.getAnswer().get(0).getName());
 	}
 
 	@Test

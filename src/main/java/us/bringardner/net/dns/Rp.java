@@ -46,26 +46,26 @@ public class Rp extends RR
 
 		public Rp() {
 				super();
-				setType(MX);
+				setType(RP);
 				setDnsClass(IN);
 				isBase = false;
 				dirty = true;
 		}
 public Rp(String name) 
 {
-	super(name,MX,IN);
+	super(name,RP,IN);
 	isBase = false;
 	dirty = true;
 }
 public Rp(String name, int dnsClass) 
 {
-	super(name,MX,dnsClass);
+	super(name,RP,dnsClass);
 	isBase = false;
 	dirty = true;
 }
 public Rp(String name, short dnsClass) 
 {
-	super(name,MX,dnsClass);
+	super(name,RP,dnsClass);
 	isBase = false;
 	dirty = true;
 }

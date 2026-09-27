@@ -338,6 +338,18 @@ public class Zone implements DNS {
 			rr = PresignedRecords.parse(type, rrName, dnsClass, new ArrayList<String>(list.subList(3, list.size())), this::fixName);
 			break;
 
+		case RP: {
+			//  name TTL IN RP mbox-dname txt-dname (RFC 1183)
+			if( list.size() < 5 ) {
+				throw new IllegalArgumentException("RP needs mbox and txt names");
+			}
+			us.bringardner.net.dns.Rp rp = new us.bringardner.net.dns.Rp(rrName,dnsClass);
+			rp.setMboxDname(fixName((String)list.get(3)));
+			rp.setTxtDname(fixName((String)list.get(4)));
+			rr = rp;
+			break;
+		}
+
 		case SPF: Spf spf = new Spf(rrName,dnsClass);
 		rr = spf;
 		spf.setStrings(characterStrings(list, 3));
@@ -411,10 +423,79 @@ public class Zone implements DNS {
 			ret = origin != null ? origin : currentName;
 		} else if( ret.endsWith(".") ) {
 			ret = stripDot(ret);
+		} else if( origin != null && origin.isEmpty() ) {
+			//  The origin is the root (parseRecord): the name is absolute as it is
 		} else {
 			ret = ret+"."+(origin != null ? origin : stripDot(soa.getName()));
 		}
 		return ret;
+	}
+
+	/**
+	 * A record from the text of its data, read as a zone file line is (the
+	 * same types and formats), with the root as the origin: relative names
+	 * in the data are absolute, as in nsupdate. The RFC 3597 form
+	 * {@code \# length hex} is read by the caller.
+	 *
+	 * @param owner the owner name
+	 * @param ttl the TTL (seconds)
+	 * @param dnsClass the class (e.g. DNS.IN)
+	 * @param type the type (e.g. DNS.A)
+	 * @param rdata the data, e.g. "10 mail.example.com." for MX
+	 * @throws IllegalArgumentException if the data is not valid for the type
+	 */
+	public static RR parseRecord(String owner, long ttl, int dnsClass, int type, String rdata) {
+		Zone z = new Zone();
+		z.origin = "";
+		z.currentName = "";
+		Soa s = new Soa("");
+		s.setDnsClass(dnsClass);
+		z.soa = s;
+		//  Parentheses only group lines in a file; here they are spaces
+		StringBuilder text = new StringBuilder();
+		boolean quoted = false;
+		for(int i=0; i < rdata.length(); i++ ) {
+			char c = rdata.charAt(i);
+			if( c == '\\' && i+1 < rdata.length() ) {
+				text.append(c).append(rdata.charAt(++i));
+				continue;
+			}
+			if( c == '"' ) {
+				quoted = !quoted;
+			} else if( !quoted && (c == '(' || c == ')') ) {
+				c = ' ';
+			}
+			text.append(c);
+		}
+		if( type <= 0 || type >= Utility.TYPENAMES.length || Character.isDigit(Utility.TYPENAMES[type].charAt(0)) ) {
+			throw new IllegalArgumentException("not implemented");
+		}
+		List<String> list = z.parseLine(null, "x 0 "+Utility.TYPENAMES[type]+" "+text.toString().trim());
+		if( list.size() < 4 ) {
+			throw new IllegalArgumentException("unexpected end of input");
+		}
+		if( type == SOA ) {
+			//  (a zone file has its SOA first, apart from the other records)
+			if( list.size() < 10 ) {
+				throw new IllegalArgumentException("unexpected end of input");
+			}
+			Soa soa = new Soa(stripDot(owner), dnsClass);
+			soa.setMname(z.fixName(list.get(3)));
+			soa.setRname(z.fixName(list.get(4)));
+			soa.setSerial((int)Long.parseLong(list.get(5)));
+			soa.setRefreash(Utility.toSeconds(list.get(6)));
+			soa.setRetry(Utility.toSeconds(list.get(7)));
+			soa.setExpire(Utility.toSeconds(list.get(8)));
+			soa.setMinimum(Utility.toSeconds(list.get(9)));
+			soa.setTTL((int)ttl);
+			return soa;
+		}
+		list.set(2, Utility.TYPENAMES[type]);
+		RR rr = z.buildRR(list);
+		rr.setName(stripDot(owner));
+		rr.setDnsClass(dnsClass);
+		rr.setTTL((int)ttl);
+		return rr;
 	}
 
 

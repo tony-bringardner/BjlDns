@@ -89,7 +89,11 @@ public class TestServFail {
 	}
 
 	@Test
-	public void fullBacklogAnswersServfail() {
+	public void fullBacklogAnswersServfail() throws InterruptedException {
+		//  Resolver threads left running by a server another test started would
+		//  take the requests off the backlog before it is full
+		Resolver.shutDown();
+		Resolver.awaitShutdown(5000);
 		ResolverThread.clearBacklog();
 		try {
 			DnsServer s = recursiveServer();

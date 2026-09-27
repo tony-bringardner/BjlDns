@@ -1,6 +1,6 @@
 # BjlDns
  The DNS project provides everything you need to run a DNS server and  a DNS client
- and a NsLookup tool.
+ and the NsLookup and NsUpdate tools (work-alikes of nslookup and nsupdate).
 
 The intent of this DNS code is to support a large number of domains with very little administrative overhead.
  
@@ -11,7 +11,7 @@ The intent of this DNS code is to support a large number of domains with very li
  +  Supports a common configuration that will be used for any domain that does not have a unique configuration.
  +  Domains may be in a database or file system
  +  Support Dynamic DNS (DDNS) with trivial configuration
- +  Zone file record types: SOA, NS, A, AAAA, CNAME, PTR, MX, TXT, SPF, HINFO, SRV, CAA, HTTPS, SVCB, DS (other types are passed through unchanged when resolving)
+ +  Zone file record types: SOA, NS, A, AAAA, CNAME, PTR, MX, TXT, SPF, HINFO, RP, SRV, CAA, HTTPS, SVCB, DS (other types are passed through unchanged when resolving)
  +  DNSSEC: zones are signed by the server itself when it has keys for them, or served as signed by another tool (see below)
 
 Not supported: incremental zone transfer (IXFR is answered with the whole zone), acting as a secondary (incoming NOTIFY gets NOTIMP), signing with NSEC3 opt-out (zones signed elsewhere with it are served), automatic trust anchor updates (RFC 5011), and the `$GENERATE` zone file directive.
@@ -33,7 +33,7 @@ Each `<zone>.txt` file in `JDns.zone.dir` is one zone, in the RFC 1035 master fi
 
 Allowed for requests signed with a key in `JDns.updateKeys` (or from `JDns.updateAllow`); everyone else gets REFUSED. Prerequisites, adds and all three kinds of delete are supported, with the RFC's rules (the apex SOA and NS RRset can't be deleted, never the last NS, no other data next to a CNAME). An update is all or nothing.
 
-The zone file is never rewritten. Changes are appended to a journal next to it, `<zone file>.jnl`, before they are served, and replayed on top of the zone file when it is loaded. Each change raises the SOA serial by one and sends NOTIFY to the secondaries. To edit a zone by hand after updates, edit the zone file (it keeps the updates as long as the serial stays the same) or raise its serial to start over: the journal is then renamed `.jnl.old` and not used. Updates can add A, AAAA, NS, CNAME, PTR, MX, TXT, SPF, HINFO, SRV, CAA, HTTPS, SVCB and DS records; other types are REFUSED. A signed zone is signed again after each update. A TXT record keeps one string (several strings are joined).
+The zone file is never rewritten. Changes are appended to a journal next to it, `<zone file>.jnl`, before they are served, and replayed on top of the zone file when it is loaded. Each change raises the SOA serial by one and sends NOTIFY to the secondaries. To edit a zone by hand after updates, edit the zone file (it keeps the updates as long as the serial stays the same) or raise its serial to start over: the journal is then renamed `.jnl.old` and not used. Updates can add A, AAAA, NS, CNAME, PTR, MX, TXT, SPF, HINFO, SRV, CAA, HTTPS, SVCB and DS records; other types are REFUSED. A signed zone is signed again after each update. Send updates with `nsupdate` or [NsUpdate](#nsupdate).
 
 # DNSSEC
 
@@ -106,6 +106,29 @@ Differences from `nslookup`: `help` prints the commands (nslookup says it is not
 | `JDns.resolvConf` | `/etc/resolv.conf` | The resolv.conf NsLookup reads its default servers, search list and options from |
 
 The old options `-s SERVER` and `-p PORT` are gone: use `nslookup host SERVER` and `-port=PORT`. The old `set debug=y`, `set recurse y` and `set udp` forms are replaced by `set debug` / `set nodebug`, `set recurse` / `set norecurse` and `set novc`.
+
+# NsUpdate
+
+`us.bringardner.net.dns.util.NsUpdate` works like the ISC BIND 9 `nsupdate` (RFC 2136 dynamic update): the same command line, commands, output (`show`, `answer`, `-d`), messages and exit status. It was checked against `nsupdate` 9.18 on the same scripts and server, output and resulting zone (`TestNsUpdate` replays 64 recorded cases).
+
+```
+java -cp bjl_dns.jar:bjl_core.jar:bjl_io.jar us.bringardner.net.dns.util.NsUpdate [options] [script]
+```
+
+```
+server 192.0.2.53
+zone example.com
+update delete www.example.com A
+update add www.example.com 300 A 192.0.2.80
+send
+```
+
++ **Command line**: `-y [hmac:]keyname:secret` or `-k keyfile` (a named.conf `key` clause as `tsig-keygen` writes it, or a `K*.+163+*` pair) sign the updates with TSIG; `-l` (localhost, key from `/var/run/named/session.key`), `-p port`, `-v` (TCP), `-t timeout`, `-u udptimeout`, `-r udpretries`, `-C resolv.conf`, `-d`/`-D` (debug), `-i`, `-4`/`-6`, `-V`. Without a script file, commands come from standard input.
++ **Commands**: `server name [port]`, `local address [port]`, `zone name`, `class`, `ttl`, `key [hmac:]name secret`, `check-names on|off`, `[prereq] nxdomain|yxdomain|nxrrset|yxrrset ...`, `[update] add|del[ete] ...`, `show`, `send` (or a blank line), `answer`, `debug`, `version`, `help`, `quit`. Record data is written as in a zone file (all the types BjlDns reads, and `\# length hex` for any type); names are absolute.
++ **Finding the zone**: without `zone` and `server`, the zone and its primary come from an SOA query to the servers in resolv.conf (as `nsupdate`), then the update goes to the primary named in the SOA.
++ **Exit status**: 0; 1 for a syntax or setup error (a script stops at the first one); 2 when an update failed (e.g. `update failed: NXRRSET`).
+
+Differences from `nsupdate`: no GSS-TSIG (`-g`, `-o`), SIG(0) keys or truncated MACs (`hmac-sha256-128`); `-T` lists the types BjlDns knows and `-P` none; the time stamped messages of BIND's own log (e.g. `dns_rdata_fromtext: ... near '10.3.0.999'` before "invalid rdata format") are not printed; `-D` prints fewer internal steps.
 
 # Running in production
 

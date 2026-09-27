@@ -1,0 +1,10 @@
+$TTL 3600
+@	IN	SOA	localhost. hostmaster.upd.test. ( 1 7200 900 1209600 300 )
+	IN	NS	ns1
+	IN	MX	10 mail
+ns1	IN	A	10.3.0.53
+mail	IN	A	10.3.0.25
+www	IN	A	10.3.0.80
+www	IN	A	10.3.0.81
+txt	IN	TXT	"one" "two"
+alias	IN	CNAME	www

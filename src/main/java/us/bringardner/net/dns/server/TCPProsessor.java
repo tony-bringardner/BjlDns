@@ -194,10 +194,11 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 		}
 
 		setState("Running Enter");
+		//  This thread serves the socket it started with (see UDPProsessor.run)
+		final ServerSocket ss = serverSocket;
 
-		while( !DnsServer.isShutdown())  {
+		while( !DnsServer.isShutdown() && !ss.isClosed() )  {
 			Socket sock = null;
-			ServerSocket ss = serverSocket;
 			try {
 				setState("Running before sync");
 				synchronized (syncLok) {

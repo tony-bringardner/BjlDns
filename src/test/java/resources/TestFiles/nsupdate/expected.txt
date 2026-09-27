@@ -1,0 +1,1230 @@
+# Expected nsupdate output, recorded from ISC nsupdate 9.18.39 (Ubuntu 24.04) run against a
+# BjlDns server (upd.test.txt here; TSIG key upd.key; unsigned updates allowed from 127.0.0.1).
+# Each case: '=== name', 'args:' (tab separated), 'stdin:' (\n = new line, \t = tab), 'exit:', then
+# '--- stdout', '--- stderr' and '--- zone' (dig AXFR after the run, when the case changes the zone).
+# ${PORT} is the server's port, ${DIR} this directory, ${SCRIPT} script.txt with the port filled in, ${SINK} a UDP port that never answers, ${CLOSED} a closed port.
+=== addA
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add new.upd.test 300 A 10.3.0.99\nsend\n
+exit: 0
+--- stdout
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+new.upd.test.		300	IN	A	10.3.0.99
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== findZoneFromServer
+args: 
+stdin: server 127.0.0.1 ${PORT}\nupdate add new.upd.test 300 A 10.3.0.99\nsend\n
+exit: 0
+--- stdout
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+new.upd.test.		300	IN	A	10.3.0.99
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== showSendAnswer
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add new.upd.test 300 A 10.3.0.99\nadd new.upd.test 300 TXT "hello world" "x\\"y"\nshow\nsend\nanswer\n
+exit: 0
+--- stdout
+Outgoing update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:      0
+;; flags:; ZONE: 0, PREREQ: 0, UPDATE: 0, ADDITIONAL: 0
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+;; UPDATE SECTION:
+new.upd.test.		300	IN	A	10.3.0.99
+new.upd.test.		300	IN	TXT	"hello world" "x\"y"
+
+Answer:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:   7928
+;; flags: qr; ZONE: 1, PREREQ: 0, UPDATE: 0, ADDITIONAL: 0
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+new.upd.test.		300	IN	A	10.3.0.99
+new.upd.test.		300	IN	TXT	"hello world" "x\"y"
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== prereqFails
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nprereq nxdomain www.upd.test\nupdate add www.upd.test 300 A 10.3.0.99\nsend\nanswer\n
+exit: 2
+--- stdout
+Answer:
+;; ->>HEADER<<- opcode: UPDATE, status: YXDOMAIN, id:  55347
+;; flags: qr; ZONE: 1, PREREQ: 0, UPDATE: 0, ADDITIONAL: 0
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+--- stderr
+update failed: YXDOMAIN
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== prereqsShown
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nprereq nxdomain new.upd.test\nprereq yxdomain www.upd.test\nprereq nxrrset www.upd.test AAAA\nyxrrset www.upd.test A\nprereq yxrrset www.upd.test IN A 10.3.0.80\nshow\nsend\n
+exit: 2
+--- stdout
+Outgoing update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:      0
+;; flags:; ZONE: 0, PREREQ: 0, UPDATE: 0, ADDITIONAL: 0
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+;; PREREQUISITE SECTION:
+new.upd.test.		0	NONE	ANY	
+www.upd.test.		0	ANY	ANY	
+www.upd.test.		0	NONE	AAAA	
+www.upd.test.		0	ANY	A	
+www.upd.test.		0	IN	A	10.3.0.80
+
+--- stderr
+update failed: NXRRSET
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== prereqsPass
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nprereq nxdomain new.upd.test\nprereq yxdomain www.upd.test\nprereq nxrrset www.upd.test AAAA\nprereq yxrrset www.upd.test A\nupdate add new.upd.test 300 A 10.3.0.99\nsend\n
+exit: 0
+--- stdout
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+new.upd.test.		300	IN	A	10.3.0.99
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== deletes
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate delete www.upd.test A 10.3.0.81\nupdate delete txt.upd.test TXT\ndel alias.upd.test\ndelete mail.upd.test 300 IN A\nshow\nsend\n
+exit: 0
+--- stdout
+Outgoing update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:      0
+;; flags:; ZONE: 0, PREREQ: 0, UPDATE: 0, ADDITIONAL: 0
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+;; UPDATE SECTION:
+www.upd.test.		0	NONE	A	10.3.0.81
+txt.upd.test.		0	ANY	TXT	
+alias.upd.test.		0	ANY	ANY	
+mail.upd.test.		0	ANY	A	
+
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+www.upd.test.		3600	IN	A	10.3.0.80
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== blankLineSends
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add b.upd.test 300 A 10.3.0.7\n\nupdate add c.upd.test 300 A 10.3.0.8\nsend\n
+exit: 0
+--- stdout
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 3 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+b.upd.test.		300	IN	A	10.3.0.7
+c.upd.test.		300	IN	A	10.3.0.8
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 3 7200 900 1209600 300
+=== notSentWithoutSend
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add b.upd.test 300 A 10.3.0.7\n
+exit: 0
+--- stdout
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== quitDiscards
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add b.upd.test 300 A 10.3.0.7\nquit\nsend\n
+exit: 0
+--- stdout
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== twoUpdates
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add b.upd.test 300 A 10.3.0.7\nsend\nupdate add c.upd.test 300 A 10.3.0.8\nsend\nanswer\n
+exit: 0
+--- stdout
+Answer:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:   4079
+;; flags: qr; ZONE: 1, PREREQ: 0, UPDATE: 0, ADDITIONAL: 0
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 3 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+b.upd.test.		300	IN	A	10.3.0.7
+c.upd.test.		300	IN	A	10.3.0.8
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 3 7200 900 1209600 300
+=== defaultTtl
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nttl 600\nupdate add d.upd.test A 10.3.0.9\nshow\nsend\n
+exit: 0
+--- stdout
+Outgoing update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:      0
+;; flags:; ZONE: 0, PREREQ: 0, UPDATE: 0, ADDITIONAL: 0
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+;; UPDATE SECTION:
+d.upd.test.		600	IN	A	10.3.0.9
+
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+d.upd.test.		600	IN	A	10.3.0.9
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== ttlMissing
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add d.upd.test A 10.3.0.9\nsend\n
+exit: 1
+--- stdout
+--- stderr
+ttl 'A': not a valid number
+syntax error
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== ttlWithUnits
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add d.upd.test 1d A 10.3.0.9\nsend\n
+exit: 1
+--- stdout
+--- stderr
+ttl '1d': not a valid number
+syntax error
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== ttlOutOfRange
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add d.upd.test 2147483648 A 10.3.0.9\nsend\n
+exit: 1
+--- stdout
+--- stderr
+ttl '2147483648' is out of range (0 to 2147483647)
+syntax error
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== unknownType
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add d.upd.test 300 FOO 10.3.0.9\nsend\n
+exit: 1
+--- stdout
+--- stderr
+'FOO' is not a valid class or type: unknown class/type
+syntax error
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== badAddress
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add d.upd.test 300 A 10.3.0.999\nsend\n
+exit: 1
+--- stdout
+--- stderr
+27-Sep-2026 01:25:21.999 dns_rdata_fromtext: buffer-0x7fb50ebd9c30:1: near '10.3.0.999': bad dotted quad
+invalid rdata format: bad dotted quad
+syntax error
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== noData
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add d.upd.test 300 A\nsend\n
+exit: 1
+--- stdout
+--- stderr
+could not read rdata
+syntax error
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== badCommand
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nfrob d.upd.test\nsend\n
+exit: 1
+--- stdout
+--- stderr
+incorrect section name: frob
+syntax error
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== checkNamesOwner
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add bad_name.upd.test 300 A 10.3.0.9\nsend\n
+exit: 1
+--- stdout
+--- stderr
+check-names failed: bad owner 'bad_name.upd.test'
+syntax error
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== checkNamesMx
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add upd.test 300 MX 10 bad_mx.upd.test.\nsend\n
+exit: 1
+--- stdout
+--- stderr
+check-names failed: bad name 'bad_mx.upd.test'
+syntax error
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== checkNamesOff
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\ncheck-names off\nupdate add bad_name.upd.test 300 A 10.3.0.9\nsend\n
+exit: 0
+--- stdout
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+bad_name.upd.test.	300	IN	A	10.3.0.9
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== wildcardOwner
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add *.w.upd.test 300 A 10.3.0.9\nsend\n
+exit: 0
+--- stdout
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+*.w.upd.test.		300	IN	A	10.3.0.9
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== classMismatch
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add d.upd.test 300 CH A 10.3.0.9\nupdate add e.upd.test 300 IN A 10.3.0.9\nsend\n
+exit: 1
+--- stdout
+--- stderr
+27-Sep-2026 01:25:35.991 dns_rdata_fromtext: buffer-0x7f7ebf9d9c30:1: near eof: unexpected end of input
+invalid rdata format: unexpected end of input
+syntax error
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== help
+args: 
+stdin: help\n
+exit: 0
+--- stdout
+nsupdate 9.18.39-0ubuntu0.24.04.7-Ubuntu:
+local address [port]      (set local resolver)
+server address [port]     (set primary server for zone)
+send                      (send the update request)
+show                      (show the update request)
+answer                    (show the answer to the last request)
+quit                      (quit, any pending update is not sent)
+help                      (display this message)
+key [hmac:]keyname secret (use TSIG to sign the request)
+gsstsig                   (use GSS_TSIG to sign the request)
+oldgsstsig                (use Microsoft's GSS_TSIG to sign the request)
+zone name                 (set the zone to be updated)
+class CLASS               (set the zone's DNS class, e.g. IN (default), CH)
+check-names { on | off }  (enable / disable check-names)
+[prereq] nxdomain name    (require that this name does not exist)
+[prereq] yxdomain name    (require that this name exists)
+[prereq] nxrrset ....     (require that this RRset does not exist)
+[prereq] yxrrset ....     (require that this RRset exists)
+[update] add ....         (add the given record to the zone)
+[update] del[ete] ....    (remove the given record(s) from the zone)
+--- stderr
+=== comment
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\n; a comment\nupdate add d.upd.test 300 A 10.3.0.9\nsend\n
+exit: 0
+--- stdout
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+d.upd.test.		300	IN	A	10.3.0.9
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== tsig
+args: -y	hmac-sha256:upd.key:HpBDPHl8FMPXtqEjTWTirC+gLiVHp6RiwxZGzblgGiI=
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add k.upd.test 300 A 10.0.0.9\nsend\nanswer\n
+exit: 0
+--- stdout
+Answer:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:  18885
+;; flags: qr; ZONE: 1, PREREQ: 0, UPDATE: 0, ADDITIONAL: 1
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+;; TSIG PSEUDOSECTION:
+upd.key.		0	ANY	TSIG	hmac-sha256. 1790486742 300 32 fd9YKqg9D7/4lpi4U1isR31Fexkeg8myMAWM7xuAE1M= 18885 NOERROR 0 
+
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+k.upd.test.		300	IN	A	10.0.0.9
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== tsigKeyCommand
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nkey hmac-sha256:upd.key HpBDPHl8FMPXtqEjTWTirC+gLiVHp6RiwxZGzblgGiI=\nupdate add k.upd.test 300 A 10.0.0.9\nsend\n
+exit: 0
+--- stdout
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+k.upd.test.		300	IN	A	10.0.0.9
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== tsigWrongSecret
+args: -y	hmac-sha256:upd.key:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add k.upd.test 300 A 10.0.0.9\nsend\nanswer\n
+exit: 2
+--- stdout
+Answer:
+;; ->>HEADER<<- opcode: UPDATE, status: NOTAUTH, id:  44275
+;; flags: qr; ZONE: 1, PREREQ: 0, UPDATE: 0, ADDITIONAL: 1
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+;; TSIG PSEUDOSECTION:
+upd.key.		0	ANY	TSIG	hmac-sha256. 1790486746 300 0 44275 BADSIG 0 
+
+--- stderr
+; TSIG error with server: tsig indicates error
+update failed: NOTAUTH(BADSIG)
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== tsigUnknownKey
+args: -y	hmac-sha256:nokey:HpBDPHl8FMPXtqEjTWTirC+gLiVHp6RiwxZGzblgGiI=
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add k.upd.test 300 A 10.0.0.9\nsend\nanswer\n
+exit: 2
+--- stdout
+Answer:
+;; ->>HEADER<<- opcode: UPDATE, status: NOTAUTH, id:   9729
+;; flags: qr; ZONE: 1, PREREQ: 0, UPDATE: 0, ADDITIONAL: 1
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+;; TSIG PSEUDOSECTION:
+nokey.			0	ANY	TSIG	hmac-sha256. 1790486748 300 0 9729 BADKEY 0 
+
+--- stderr
+; TSIG error with server: tsig indicates error
+update failed: NOTAUTH(BADKEY)
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== tsigKeyFile
+args: -k	${DIR}/upd.conf
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add k.upd.test 300 A 10.0.0.9\nsend\n
+exit: 0
+--- stdout
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+k.upd.test.		300	IN	A	10.0.0.9
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== tsigKFilePair
+args: -k	${DIR}/Kupd.key.+163+00001.private
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add k.upd.test 300 A 10.0.0.9\nsend\n
+exit: 0
+--- stdout
+--- stderr
+27-Sep-2026 01:25:52.063 ${DIR}/Kupd.key.+163+00001.private: Use of K* file pairs for HMAC is deprecated
+
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+k.upd.test.		300	IN	A	10.0.0.9
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== tsigNoKeyFile
+args: -k	${DIR}/nofile
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add k.upd.test 300 A 10.0.0.9\nsend\n
+exit: 0
+--- stdout
+--- stderr
+could not read key from ${DIR}/nofile.{private,key}: file not found
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+k.upd.test.		300	IN	A	10.0.0.9
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== debug
+args: -d
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add x.upd.test 300 A 10.0.0.1\nsend\n
+exit: 0
+--- stdout
+Outgoing update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:  16848
+;; flags:; ZONE: 1, PREREQ: 0, UPDATE: 1, ADDITIONAL: 0
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+;; UPDATE SECTION:
+x.upd.test.		300	IN	A	10.0.0.1
+
+--- stderr
+Sending update to 127.0.0.1#${PORT}
+
+Reply from update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:  16848
+;; flags: qr; ZONE: 1, PREREQ: 0, UPDATE: 0, ADDITIONAL: 0
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+x.upd.test.		300	IN	A	10.0.0.1
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== debugFindZone
+args: -d
+stdin: server 127.0.0.1 ${PORT}\nupdate add x.upd.test 300 A 10.0.0.1\nsend\n
+exit: 0
+--- stdout
+Outgoing update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:  41912
+;; flags:; ZONE: 1, PREREQ: 0, UPDATE: 1, ADDITIONAL: 0
+;; UPDATE SECTION:
+x.upd.test.		300	IN	A	10.0.0.1
+
+--- stderr
+Reply from SOA query:
+;; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id:  18042
+;; flags: qr aa; QUESTION: 1, ANSWER: 0, AUTHORITY: 1, ADDITIONAL: 0
+;; QUESTION SECTION:
+;x.upd.test.			IN	SOA
+
+;; AUTHORITY SECTION:
+upd.test.		300	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+
+Found zone name: upd.test
+The primary is: localhost
+Sending update to 127.0.0.1#${PORT}
+
+Reply from update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:  41912
+;; flags: qr; ZONE: 1, PREREQ: 0, UPDATE: 0, ADDITIONAL: 0
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+x.upd.test.		300	IN	A	10.0.0.1
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== resolvConf
+args: -p	${PORT}	-C	${DIR}/resolv1.conf
+stdin: update add y.upd.test 300 A 10.0.0.1\nsend\n
+exit: 0
+--- stdout
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+y.upd.test.		300	IN	A	10.0.0.1
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== resolvConfDebug
+args: -d	-p	${PORT}	-C	${DIR}/resolv1.conf
+stdin: update add y.upd.test 300 A 10.0.0.1\nsend\n
+exit: 0
+--- stdout
+Outgoing update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:  10954
+;; flags:; ZONE: 1, PREREQ: 0, UPDATE: 1, ADDITIONAL: 0
+;; UPDATE SECTION:
+y.upd.test.		300	IN	A	10.0.0.1
+
+--- stderr
+Reply from SOA query:
+;; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id:  39835
+;; flags: qr aa rd; QUESTION: 1, ANSWER: 0, AUTHORITY: 1, ADDITIONAL: 0
+;; QUESTION SECTION:
+;y.upd.test.			IN	SOA
+
+;; AUTHORITY SECTION:
+upd.test.		300	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+
+Found zone name: upd.test
+The primary is: localhost
+Sending update to 127.0.0.1#${PORT}
+
+Reply from update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:  10954
+;; flags: qr; ZONE: 1, PREREQ: 0, UPDATE: 0, ADDITIONAL: 0
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+y.upd.test.		300	IN	A	10.0.0.1
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== resolvConfSecondServer
+args: -p	${PORT}	-u	1	-r	0	-C	${DIR}/resolv2.conf
+stdin: update add y.upd.test 300 A 10.0.0.1\nsend\n
+exit: 0
+--- stdout
+--- stderr
+; Communication with 127.0.0.2#${PORT} failed: connection refused
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+y.upd.test.		300	IN	A	10.0.0.1
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== zoneFromPrereq
+args: 
+stdin: server 127.0.0.1 ${PORT}\nprereq yxdomain www.upd.test\nsend\n
+exit: 0
+--- stdout
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== zoneDoesNotExist
+args: -p	${PORT}	-C	${DIR}/resolv1.conf
+stdin: zone nope.test\nupdate add y.nope.test 300 A 10.0.0.1\nsend\n
+exit: 1
+--- stdout
+--- stderr
+; Communication with 127.0.0.1#${PORT} failed: REFUSED
+could not reach any name server
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== notInZone
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add y.other.test 300 A 10.0.0.1\nsend\n
+exit: 2
+--- stdout
+--- stderr
+update failed: NOTZONE
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== serverPortNotNumeric
+args: 
+stdin: server 127.0.0.1 x\n
+exit: 1
+--- stdout
+--- stderr
+port 'x' is not numeric
+syntax error
+=== serverPortRange
+args: 
+stdin: server 127.0.0.1 70000\n
+exit: 1
+--- stdout
+--- stderr
+port '70000' is out of range (1 to 65535)
+syntax error
+=== serverUnknown
+args: 
+stdin: server bogus.invalid\n
+exit: 1
+--- stdout
+--- stderr
+couldn't get address for 'bogus.invalid': not found
+syntax error
+=== timeout
+args: -u	1	-r	1
+stdin: server 127.0.0.1 ${SINK}\nzone upd.test\nupdate add a.upd.test 300 A 1.2.3.4\nsend\n
+exit: 2
+--- stdout
+--- stderr
+; Communication with 127.0.0.1#${SINK} failed: timed out
+=== soaTimeout
+args: -u	1	-r	0
+stdin: server 127.0.0.1 ${SINK}\nupdate add a.upd.test 300 A 1.2.3.4\nsend\n
+exit: 1
+--- stdout
+--- stderr
+; Communication with 127.0.0.1#${SINK} failed: timed out
+could not reach any name server
+=== refusedUdp
+args: 
+stdin: server 127.0.0.1 ${CLOSED}\nzone upd.test\nupdate add a.upd.test 300 A 1.2.3.4\nsend\n
+exit: 2
+--- stdout
+--- stderr
+; Communication with 127.0.0.1#${CLOSED} failed: connection refused
+=== refusedTcp
+args: -v
+stdin: server 127.0.0.1 ${CLOSED}\nzone upd.test\nupdate add a.upd.test 300 A 1.2.3.4\nsend\n
+exit: 2
+--- stdout
+--- stderr
+; Communication with 127.0.0.1#${CLOSED} failed: operation canceled
+=== tcp
+args: -v
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate add v.upd.test 300 A 10.0.0.1\nsend\n
+exit: 0
+--- stdout
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+v.upd.test.		300	IN	A	10.0.0.1
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== badOption
+args: -Z
+stdin: 
+exit: 1
+--- stdout
+--- stderr
+nsupdate: illegal option -- Z
+nsupdate: invalid argument -Z
+usage: nsupdate [-CdDi] [-L level] [-l] [-g | -o | -y keyname:secret | -k keyfile] [-p port] [-v] [-V] [-P] [-T] [-4 | -6] [filename]
+=== missingArgument
+args: -p
+stdin: 
+exit: 1
+--- stdout
+--- stderr
+nsupdate: option requires an argument -- p
+nsupdate: invalid argument -p
+usage: nsupdate [-CdDi] [-L level] [-l] [-g | -o | -y keyname:secret | -k keyfile] [-p port] [-v] [-V] [-P] [-T] [-4 | -6] [filename]
+=== bothKeys
+args: -k	x	-y	a:b
+stdin: 
+exit: 1
+--- stdout
+--- stderr
+nsupdate: cannot specify both -k and -y
+=== badPort
+args: -p	x
+stdin: 
+exit: 1
+--- stdout
+--- stderr
+bad port number 'x'
+=== scriptFile
+args: ${SCRIPT}
+stdin: 
+exit: 0
+--- stdout
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+file.upd.test.		300	IN	A	10.3.0.77
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== noScriptFile
+args: ${DIR}/nosuch.txt
+stdin: 
+exit: 1
+--- stdout
+--- stderr
+could not open '${DIR}/nosuch.txt': file not found
+=== dsGoesToParent
+args: -d
+stdin: server 127.0.0.1 ${PORT}\nupdate add sub.upd.test 300 DS 12345 13 2 3D7B7C08564B92BA88FD4CD321EA651BC1ED5CB840F8D8CC64AC4C5459DB99B9\nshow\nsend\n
+exit: 0
+--- stdout
+Outgoing update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:      0
+;; flags:; ZONE: 0, PREREQ: 0, UPDATE: 0, ADDITIONAL: 0
+;; UPDATE SECTION:
+sub.upd.test.		300	IN	DS	12345 13 2 3D7B7C08564B92BA88FD4CD321EA651BC1ED5CB840F8D8CC64AC4C54 59DB99B9
+
+Outgoing update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:  22626
+;; flags:; ZONE: 1, PREREQ: 0, UPDATE: 1, ADDITIONAL: 0
+;; UPDATE SECTION:
+sub.upd.test.		300	IN	DS	12345 13 2 3D7B7C08564B92BA88FD4CD321EA651BC1ED5CB840F8D8CC64AC4C54 59DB99B9
+
+--- stderr
+Reply from SOA query:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id:   5036
+;; flags: qr aa; QUESTION: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 0
+;; QUESTION SECTION:
+;upd.test.			IN	SOA
+
+;; ANSWER SECTION:
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+
+Found zone name: upd.test
+The primary is: localhost
+Sending update to 127.0.0.1#${PORT}
+
+Reply from update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:  22626
+;; flags: qr; ZONE: 1, PREREQ: 0, UPDATE: 0, ADDITIONAL: 0
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+sub.upd.test.		300	IN	DS	12345 13 2 3D7B7C08564B92BA88FD4CD321EA651BC1ED5CB840F8D8CC64AC4C54 59DB99B9
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== manyTypes
+args: 
+stdin: update add t.upd.test 300 DNSKEY 257 3 13 GEm8AGVxd6BoQlDwj3Ap3roc7Ni5TPjD22/3vK8+gEC3bR9OjJnWrtlh PQuUy0n4d/ZqBwMH2Ll4gmjInzWpWw==\nupdate add t.upd.test 300 NSEC3PARAM 1 0 0 -\nupdate add t.upd.test 300 NSEC next.upd.test. A NS SOA RRSIG\nupdate add t.upd.test 300 HTTPS 1 . alpn=h2,h3 port=8443\nupdate add t.upd.test 300 HINFO "PC" "Linux"\nupdate add t.upd.test 300 TXT a b "c d"\nupdate add t.upd.test 300 SPF "v=spf1 -all"\nupdate add t.upd.test 300 TYPE65280 \\# 4 0A000001\nupdate add t.upd.test 300 A \\# 4 0A000001\nupdate add t.upd.test 300 PTR host\nupdate add t.upd.test 300 SOA ns1 hostmaster 1 2 3 4 5\nupdate add t.upd.test 300 RP mbox.upd.test. txt.upd.test.\nupdate add t.upd.test 300 MX 0 .\nupdate add T.Upd.Test 300 NS Ns1.Upd.Test.\nupdate add t.upd.test 300 AAAA ::ffff:1.2.3.4\nupdate add t.upd.test 300 CAA 128 tbs "Unknown"\nupdate add t.upd.test 300 TXT "tab\tx" "é"\nupdate add d.upd.test 300 CH A foo.bar. 17\nshow\n
+exit: 1
+--- stdout
+--- stderr
+class mismatch: CH
+syntax error
+=== localAddress
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nlocal 127.0.0.1\nupdate add l.upd.test 300 A 10.0.0.1\nsend\n
+exit: 0
+--- stdout
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+l.upd.test.		300	IN	A	10.0.0.1
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== localBad
+args: 
+stdin: local foo\n
+exit: 1
+--- stdout
+--- stderr
+invalid address foosyntax error
+=== upperCase
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nUPDATE ADD Mixed.Upd.Test 300 in a 10.0.0.5\nSHOW\nSEND\n
+exit: 0
+--- stdout
+Outgoing update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:      0
+;; flags:; ZONE: 0, PREREQ: 0, UPDATE: 0, ADDITIONAL: 0
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+;; UPDATE SECTION:
+Mixed.Upd.Test.		300	IN	A	10.0.0.5
+
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+Mixed.Upd.Test.		300	IN	A	10.0.0.5
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== deleteIgnoresTtl
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nupdate delete www.upd.test 300 A\nshow\nsend\n
+exit: 0
+--- stdout
+Outgoing update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:      0
+;; flags:; ZONE: 0, PREREQ: 0, UPDATE: 0, ADDITIONAL: 0
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+;; UPDATE SECTION:
+www.upd.test.		0	ANY	A	
+
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 2 7200 900 1209600 300
+=== prereqWithClass
+args: 
+stdin: server 127.0.0.1 ${PORT}\nzone upd.test\nprereq yxrrset www.upd.test IN A\nprereq nxrrset www.upd.test IN MX\nshow\nsend\n
+exit: 0
+--- stdout
+Outgoing update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:      0
+;; flags:; ZONE: 0, PREREQ: 0, UPDATE: 0, ADDITIONAL: 0
+;; ZONE SECTION:
+;upd.test.			IN	SOA
+
+;; PREREQUISITE SECTION:
+www.upd.test.		0	ANY	A	
+www.upd.test.		0	NONE	MX	
+
+--- stderr
+--- zone
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+upd.test.		3600	IN	NS	ns1.upd.test.
+upd.test.		3600	IN	MX	10 mail.upd.test.
+ns1.upd.test.		3600	IN	A	10.3.0.53
+mail.upd.test.		3600	IN	A	10.3.0.25
+www.upd.test.		3600	IN	A	10.3.0.80
+www.upd.test.		3600	IN	A	10.3.0.81
+txt.upd.test.		3600	IN	TXT	"one" "two"
+alias.upd.test.		3600	IN	CNAME	www.upd.test.
+upd.test.		3600	IN	SOA	localhost. hostmaster.upd.test. 1 7200 900 1209600 300
+=== keyCommandErrors
+args: -i
+stdin: key\nkey upd.key\nshow\n
+exit: 0
+--- stdout
+Outgoing update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:      0
+;; flags:; ZONE: 0, PREREQ: 0, UPDATE: 0, ADDITIONAL: 0
+--- stderr
+could not read key name
+could not read key secret
+=== interactiveKeepsGoing
+args: -i
+stdin: frob\nshow\n
+exit: 0
+--- stdout
+Outgoing update query:
+;; ->>HEADER<<- opcode: UPDATE, status: NOERROR, id:      0
+;; flags:; ZONE: 0, PREREQ: 0, UPDATE: 0, ADDITIONAL: 0
+--- stderr
+incorrect section name: frob

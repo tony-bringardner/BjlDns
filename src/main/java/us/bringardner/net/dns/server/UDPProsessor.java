@@ -51,6 +51,8 @@ public class UDPProsessor extends DnsRequestProcessor implements Runnable
 
 	//  Used for syncronization of the UDP Socket
 	private static DatagramSocket sock;
+	/** The socket this processor serves (see run) */
+	private DatagramSocket mySock;
 
 	//  How to reply to the client;
 	private InetAddress client;
@@ -126,6 +128,10 @@ public void run ()
 		setState("Can't run, no socket");
 		return;
 	}
+	//  This thread serves the socket it started with. (The socket is static: when
+	//  it was closed and initUDPProsessor made a new one, as tests do, a thread
+	//  of the old server went on answering on the new one.)
+	mySock = sock;
 	setState("Running Enter");
 	
 	byte [] data = null;
@@ -150,12 +156,12 @@ public void run ()
 
 			// Get control
 			setState("Running before sync");			
-			synchronized (sock) {
+			synchronized (mySock) {
 				setState("Running after sync");			
 				// wait for a req
 				if( !DnsServer.isShutdown())  {
 					doit = true;
-					sock.receive(recPckt);
+					mySock.receive(recPckt);
 					timer = System.currentTimeMillis();
 				} else {
 					doit = false;
@@ -170,7 +176,7 @@ public void run ()
 			//log("Exception in UDP sock.receive(recPckt)",ex);
 			doit = false;
 			setState("Running Error doit=false");
-			if( sock.isClosed() ) {
+			if( mySock.isClosed() ) {
 				//  Nothing more will arrive; this used to spin in a tight
 				//  loop (receive fails at once) until the shutdown flag was set
 				setState("Running socket closed");
@@ -238,7 +244,7 @@ void sendFormatError(byte [] packet, int length) {
 		return;
 	}
 	try {
-		sock.send(new DatagramPacket(reply,reply.length,client,port));
+		(mySock != null ? mySock : sock).send(new DatagramPacket(reply,reply.length,client,port));
 	} catch(IOException ex) {
 		log("IOException sending FORMERR",ex);
 	}
@@ -285,7 +291,7 @@ public void sendResponse(Message msg)
 		setState("SendResponse gotPacket");
 		try {
 			setState("SendResponse before sock.send");
-			sock.send(pckt);
+			(mySock != null ? mySock : sock).send(pckt);
 			setState("SendResponse after sock.send");
 		
 			if( DnsServer.isDebug() ) {

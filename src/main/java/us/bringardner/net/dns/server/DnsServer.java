@@ -2051,7 +2051,12 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		//  In a signed zone only the apex has an SOA: other names get NODATA
 		//  (validators reject the renamed SOA the default zone makes up)
 		boolean signedName = zone.getSigned() != null && zone.contains(target);
-		if( type == DNS.SOA && !(signedName && !zone.isApex(target)) ) {
+		//  Only a zone apex (or a domain served by the default zone) has an SOA:
+		//  other names get NODATA / NXDOMAIN with the SOA in the authority
+		//  section. (Every name used to get an SOA named after itself, so a
+		//  client looking for the zone of www.example.com, as nsupdate does,
+		//  took www.example.com for a zone.)
+		if( type == DNS.SOA && isZoneApex(target, zone) && !(signedName && !zone.isApex(target)) ) {
 			Soa soa = zone.getSoa();
 			ret.addAnswer(soaFor(zone, targetName));
 			//  (MNAME and RNAME used to be swapped in Soa; see Soa.toByteArray)
