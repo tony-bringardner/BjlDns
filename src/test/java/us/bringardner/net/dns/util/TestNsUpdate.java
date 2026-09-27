@@ -287,6 +287,11 @@ public class TestNsUpdate {
 	 */
 	static String normalize(String s) {
 		s = s.replaceAll("(?m)^\\d\\d-\\w\\w\\w-\\d{4} [\\d:.]+ .*\n", "");
+		//  A UDP request to a closed port fails at once with "connection refused"
+		//  only when the ICMP port unreachable comes back. Linux sends it; macOS
+		//  rate-limits (and may drop) it, and then the request times out, for
+		//  nsupdate too. Either is right, so they compare equal.
+		s = s.replaceAll("(?m)^(; Communication with \\S+ failed: )(connection refused|timed out)$", "$1no answer");
 		java.util.regex.Matcher m = java.util.regex.Pattern.compile("id: +\\d+").matcher(s);
 		StringBuffer sb = new StringBuffer();
 		while( m.find() ) {
