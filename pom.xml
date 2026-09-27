@@ -9,7 +9,7 @@
 		for both server and client.</description>
 	<inceptionYear>1999</inceptionYear>
 	<groupId>us.bringardner</groupId>
-	<version>0.1.1</version>
+	<version>1.0.0</version>
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<maven.compiler.release>11</maven.compiler.release>
