@@ -38,7 +38,6 @@ import us.bringardner.net.dns.A;
 import us.bringardner.net.dns.ByteBuffer;
 import us.bringardner.net.dns.DNS;
 import us.bringardner.net.dns.Message;
-import us.bringardner.net.dns.Section;
 import us.bringardner.net.dns.server.DnsServer;
 import us.bringardner.net.dns.server.UDPProsessor;
 
