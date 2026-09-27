@@ -75,6 +75,65 @@ public class Resolver  extends DnsBaseClass
 	/** seconds, default 10800 (3 hours) */
 	public static final String PROP_MAX_NEGATIVE_TTL = "JDns.maxNegativeTtl";
 	public static final String PROP_DELEGATION_MAX_AGE = "JDns.delegationMaxAge";
+	/** Validate the answers of recursive queries with DNSSEC (default false). */
+	public static final String PROP_DNSSEC_VALIDATION = "JDns.dnssecValidation";
+	/** File of trust anchors (DS or DNSKEY records); relative to JDns.dnsDir. Default: the root zone's keys, built in. */
+	public static final String PROP_DNSSEC_TRUST_ANCHORS = "JDns.dnssecTrustAnchors";
+
+	//  DNSSEC validation (null: off)
+	private static volatile Validator validator;
+
+	/** Turn validation on (a validator) or off (null). */
+	public static void setValidator(Validator v) {
+		validator = v;
+	}
+
+	public static Validator getValidator() {
+		return validator;
+	}
+
+	/** Do upstream queries ask for DNSSEC records, and are answers validated? */
+	public static boolean isValidating() {
+		return validator != null;
+	}
+
+	/** A validator that fetches through this resolver, with the given trust anchors. */
+	public static Validator newValidator(List<us.bringardner.net.dns.Ds> anchors) {
+		return new Validator(Resolver::resolve, () -> System.currentTimeMillis()/1000, anchors,
+				Math.max(1000, Cache.getDefaultMaxEntries()));
+	}
+
+	/** An answer and, if it was validated, the result. */
+	public static final class Answer {
+		public final Message msg;
+		/** null if not validated (validation off, checking disabled, or no answer) */
+		public final Validator.Result result;
+
+		Answer(Message msg, Validator.Result result) {
+			this.msg = msg;
+			this.result = result;
+		}
+	}
+
+	/**
+	 * Resolve and, when validation is on and the client did not set CD,
+	 * validate the answer.
+	 */
+	public static Answer resolveValidated(Section question, boolean checkingDisabled) {
+		Message m = resolve(question);
+		Validator v = validator;
+		if( m == null || v == null || checkingDisabled ) {
+			return new Answer(m, null);
+		}
+		Validator.Result r;
+		try {
+			r = v.validate(m, question);
+		} catch(RuntimeException ex) {
+			new Resolver().logError("DNSSEC validation of "+question+" failed", ex);
+			r = new Validator.Result(Validator.Status.BOGUS, "validation failed: "+ex);
+		}
+		return new Answer(m, r);
+	}
 
 	/** A zone's name servers learned from a referral. */
 	private static final class Delegation {
@@ -381,6 +440,24 @@ public class Resolver  extends DnsBaseClass
 			}
 		}
 
+		//  DNSSEC validation
+		String val = prop.getProperty(PROP_DNSSEC_VALIDATION);
+		if( val != null && val.trim().equalsIgnoreCase("true") ) {
+			List<us.bringardner.net.dns.Ds> anchors = Validator.rootAnchors();
+			String af = prop.getProperty(PROP_DNSSEC_TRUST_ANCHORS);
+			if( af != null && !af.trim().isEmpty() ) {
+				File a = new File(af.trim());
+				if( !a.isAbsolute() ) {
+					a = new File(dnsDir, af.trim());
+				}
+				anchors = Validator.loadAnchors(a);
+			}
+			setValidator(newValidator(anchors));
+			new Resolver().log("DNSSEC validation on, "+anchors.size()+" trust anchors");
+		} else {
+			setValidator(null);
+		}
+
 		int resolverCount = 10;
 
 		if( (tmp=prop.getProperty(PROP_RESOLVER_COUNT)) != null ) {
@@ -527,8 +604,14 @@ public class Resolver  extends DnsBaseClass
 
 		Message ret = cache.get(question);
 		if( ret == null ) {
-			//  Nothing in cache, search for it
-			if( (ret=resolve(question, getServers(question), deadline)) != null ) {
+			//  Nothing in cache, search for it. A DS record lives in the parent
+			//  zone (RFC 4035 3.1.4.1): start from the parent's servers, not
+			//  from the child's (which would answer NODATA from the child side)
+			Section where = question;
+			if( question.getType() == DNS.DS && question.getParentName() != null && !question.getParentName().isEmpty() ) {
+				where = new Section(question.getParentName(), DNS.NS, question.getDnsClass());
+			}
+			if( (ret=resolve(question, getServers(where), deadline)) != null ) {
 				cache.put(ret);						
 			}
 		}
@@ -598,8 +681,10 @@ public class Resolver  extends DnsBaseClass
 					}
 
 					//  Got something.  It could be an answer or a delegation
-					if( ret.getResponseCode() != DNS.NOERROR || ret.getAnswerCount() > 0 ) {
-						//  Got it
+					if( ret.getResponseCode() != DNS.NOERROR || ret.getAnswerCount() > 0 || isNoData(ret) ) {
+						//  Got it (NODATA too: an SOA in the authority section is
+						//  a negative answer, not a referral; it used to be taken
+						//  for one and the query failed with SERVFAIL)
 						break;
 					}
 					//  Check for a delegation here
@@ -626,6 +711,19 @@ public class Resolver  extends DnsBaseClass
 		return ret;
 	}
 	
+	/** An answer that the name has no data of the type: no answers, an SOA in the authority section (RFC 2308 2.2). */
+	static boolean isNoData(Message m) {
+		if( m.getAnswerCount() > 0 ) {
+			return false;
+		}
+		for(RR rr : m.getAuthority()) {
+			if( rr.getType() == DNS.SOA ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/**
 	 * Wait up to ms for the resolver threads stopped by shutDown() to finish.
 	 * @return true if they all have

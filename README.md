@@ -14,7 +14,7 @@ The intent of this DNS code is to support a large number of domains with very li
  +  Zone file record types: SOA, NS, A, AAAA, CNAME, PTR, MX, TXT, SPF, HINFO, SRV, CAA, HTTPS, SVCB, DS (other types are passed through unchanged when resolving)
  +  DNSSEC: zones are signed by the server itself when it has keys for them, or served as signed by another tool (see below)
 
-Not supported: incremental zone transfer (IXFR is answered with the whole zone), acting as a secondary (incoming NOTIFY gets NOTIMP), NSEC3 opt-out, validating answers from other servers when resolving, and the `$GENERATE` zone file directive.
+Not supported: incremental zone transfer (IXFR is answered with the whole zone), acting as a secondary (incoming NOTIFY gets NOTIMP), signing with NSEC3 opt-out (zones signed elsewhere with it are served), automatic trust anchor updates (RFC 5011), and the `$GENERATE` zone file directive.
 
 # Zone files
 
@@ -62,6 +62,17 @@ In a signed zone:
  +  An SOA query for a name other than the apex gets NODATA (the made-up SOA the default zone gives other names can't be signed).
  +  DNSKEY, RRSIG, NSEC, NSEC3 and NSEC3PARAM records can't be added with UPDATE (DS can); in a zone file they make it a zone signed elsewhere.
  +  Names outside the zone itself (the `*.*.` patterns a default zone uses for other domains) are served unsigned.
+
+### Validating (resolver)
+
+With `JDns.dnssecValidation=true` the resolver validates the answers it fetches for clients (RFC 4033-4035, RFC 5155, RFC 6840): it asks upstream servers for the DNSSEC records (DO), follows the chain of trust down from the trust anchors (by default the root zone's keys, KSK-2017 and KSK-2024) with the DS and DNSKEY records, and checks every signature and every proof that something does not exist.
+ +  Secure answers get the AD bit when the client set DO or AD. Answers under a delegation proven to be unsigned (or signed only with algorithms we don't support) are passed on without it. Answers that fail validation (bad or missing signatures, expired ones, a missing proof) are BOGUS: the client gets SERVFAIL, and the reason is logged.
+ +  A client that sets CD gets the answer without validation (it validates itself). Clients that don't set DO get no RRSIG, NSEC or NSEC3 records.
+ +  Algorithms: RSASHA1 and NSEC3RSASHA1 (validation only), RSASHA256, RSASHA512, ECDSA P-256 and P-384, Ed25519 (Java 15+). DS digests SHA-1, SHA-256, SHA-384. NSEC3 with more than 150 iterations, and answers resting on an opt-out NSEC3, are treated as insecure (RFC 9276, RFC 5155 9.2).
+ +  Key sets and zone cuts are cached (their TTLs, at most an hour; failures for a minute).
+ +  `JDns.dnssecTrustAnchors` names a file of anchors, one DS or DNSKEY record per line (BIND's `root.key` or `root.ds` work), e.g. for a private zone; it replaces the built in root anchors. The root anchors are not updated automatically: if the root zone rolls its key again, update BjlDns or give the new key in this file.
+ +  Validation needs correct time on the server (signatures have validity periods) and upstream servers that pass on DNSSEC records.
+ +  It only matters when BjlDns resolves for clients (`JDns.ra=true`); an authoritative-only server doesn't need it.
    
  
 Dependencies:  
@@ -151,6 +162,8 @@ A bind address of `localhost` means this host's own name (its network address), 
 | `JDns.maxNegativeTtl` | 10800 | Upper bound (s) for caching "does not exist" answers |
 | `JDns.maxDelegations` | 10000 | Learned delegations kept (LRU) |
 | `JDns.delegationMaxAge` | 3600 | Seconds a learned delegation is used before a fresh referral replaces it |
+| `JDns.dnssecValidation` | false | Validate the answers of recursive queries with DNSSEC (see "Validating") |
+| `JDns.dnssecTrustAnchors` | the root zone's keys (built in) | File of trust anchors (DS or DNSKEY records), relative to `JDns.dnsDir` |
 
 ### Admin port
 

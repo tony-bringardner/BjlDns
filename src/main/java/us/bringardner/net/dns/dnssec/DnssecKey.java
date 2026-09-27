@@ -392,8 +392,8 @@ public final class DnssecKey {
 		if( (k.getFlags() & Dnskey.FLAG_ZONE) == 0 || k.getProtocol() != 3 ) {
 			throw new IOException(f.getName()+": not a zone key (flags "+k.getFlags()+", protocol "+k.getProtocol()+")");
 		}
-		if( !Algorithm.isSupported(k.getAlgorithm()) ) {
-			throw new IOException(f.getName()+": algorithm "+k.getAlgorithm()+" is not supported");
+		if( !Algorithm.isSupported(k.getAlgorithm()) || !Algorithm.of(k.getAlgorithm()).canSign() ) {
+			throw new IOException(f.getName()+": algorithm "+k.getAlgorithm()+" is not supported for signing");
 		}
 		k.setTTL(ttl);
 		return k;

@@ -254,11 +254,23 @@ public class Cache extends DnsBaseClass
 		soaCopy.setTTL((int)negTtl);
 
 		long now = clock.getAsLong();
+		//  Keep the DNSSEC proof (NSEC / NSEC3 and the signatures) with the SOA,
+		//  so a cached negative answer can still be validated
+		List<RR> authority = new ArrayList<RR>();
+		authority.add(soaCopy);
+		for(RR rr : msg.getAuthority()) {
+			int t = rr.getType();
+			if( t == DNS.RRSIG || t == DNS.NSEC || t == DNS.NSEC3 ) {
+				RR c = rr.copy();
+				c.setTTL((int)Math.min(ttlOf(rr), negTtl));
+				authority.add(c);
+			}
+		}
 		Entry e = new Entry(
 				msg.getHeader().copy(),
 				new Section(msg.getFirstQuestion()),
 				Collections.<RR>emptyList(),
-				Collections.singletonList(soaCopy),
+				authority,
 				Collections.<RR>emptyList(),
 				now,
 				now + life);

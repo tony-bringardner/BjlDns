@@ -60,6 +60,10 @@ import java.util.Map;
  */
 public abstract class Algorithm {
 
+	/** RSA/SHA-1: validated only (RFC 8624: not to be used for signing). */
+	public static final int RSASHA1 = 5;
+	/** RSA/SHA-1 for NSEC3 zones: validated only. */
+	public static final int RSASHA1_NSEC3_SHA1 = 7;
 	public static final int RSASHA256 = 8;
 	public static final int RSASHA512 = 10;
 	public static final int ECDSAP256SHA256 = 13;
@@ -103,11 +107,18 @@ public abstract class Algorithm {
 
 	private static final Map<Integer, Algorithm> ALL = new LinkedHashMap<Integer, Algorithm>();
 	static {
+		ALL.put(RSASHA1, new Rsa(RSASHA1, "RSASHA1", "SHA1withRSA", false));
+		ALL.put(RSASHA1_NSEC3_SHA1, new Rsa(RSASHA1_NSEC3_SHA1, "NSEC3RSASHA1", "SHA1withRSA", false));
 		ALL.put(RSASHA256, new Rsa(RSASHA256, "RSASHA256", "SHA256withRSA"));
 		ALL.put(RSASHA512, new Rsa(RSASHA512, "RSASHA512", "SHA512withRSA"));
 		ALL.put(ECDSAP256SHA256, new Ecdsa(ECDSAP256SHA256, "ECDSAP256SHA256", "secp256r1", "SHA256withECDSA", 32));
 		ALL.put(ECDSAP384SHA384, new Ecdsa(ECDSAP384SHA384, "ECDSAP384SHA384", "secp384r1", "SHA384withECDSA", 48));
 		ALL.put(ED25519, new Ed25519());
+	}
+
+	/** Can keys of this algorithm sign here (else they are only validated)? */
+	public boolean canSign() {
+		return true;
 	}
 
 	/** @throws IllegalArgumentException for an algorithm that is not supported */
@@ -126,7 +137,7 @@ public abstract class Algorithm {
 			return of(Integer.parseInt(n));
 		}
 		for(Algorithm a : ALL.values()) {
-			if( a.mnemonic.equalsIgnoreCase(n) ) {
+			if( a.mnemonic.equalsIgnoreCase(n) && a.canSign() ) {
 				return a;
 			}
 		}
@@ -167,14 +178,28 @@ public abstract class Algorithm {
 
 	static final class Rsa extends Algorithm {
 		private final String sigAlg;
+		private final boolean signing;
 
 		Rsa(int n, String m, String sigAlg) {
+			this(n, m, sigAlg, true);
+		}
+
+		Rsa(int n, String m, String sigAlg, boolean signing) {
 			super(n, m);
 			this.sigAlg = sigAlg;
+			this.signing = signing;
+		}
+
+		@Override
+		public boolean canSign() {
+			return signing;
 		}
 
 		@Override
 		public KeyPair generate(int bits) throws GeneralSecurityException {
+			if( !signing ) {
+				throw new GeneralSecurityException(getMnemonic()+" (SHA-1) is only validated, not used to sign (RFC 8624)");
+			}
 			KeyPairGenerator g = KeyPairGenerator.getInstance("RSA");
 			g.initialize(new RSAKeyGenParameterSpec(bits <= 0 ? 2048 : bits, RSAKeyGenParameterSpec.F4));
 			return g.generateKeyPair();

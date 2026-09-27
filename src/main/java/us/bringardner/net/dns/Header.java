@@ -91,6 +91,8 @@ public class Header extends Utility implements DNS
         rd = true;
         ra = false;
         z = 0;
+        ad = false;
+        cd = false;
         rcode = (byte)NOERROR;
         qdcount = 0;
         ancount = 0;
@@ -127,6 +129,9 @@ public class Header extends Utility implements DNS
         ret.setTC(tc);
         ret.setRD(rd);
         ret.setRA(ra);
+        //  CD is echoed in responses (RFC 6840 5.9); AD is not copied: it is
+        //  set only on answers this server validated
+        ret.setCD(cd);
         ret.setRCODE(rcode);
 
         return ret;
@@ -196,7 +201,9 @@ public class Header extends Utility implements DNS
         tc = isSet(tmp, 9);
         rd = isSet(tmp, 8);
         ra = isSet(tmp, 7);
-        z = 0; // bits 6,5,4
+        z = 0; // bit 6
+        ad = isSet(tmp, 5);
+        cd = isSet(tmp, 4);
         rcode = (byte)( tmp & 0x0f); //  bits 3,2,1,0
         qdcount = in.nextShort();
         ancount = in.nextShort();
@@ -205,6 +212,17 @@ public class Header extends Utility implements DNS
     }
     /** Set the value for AA (Authoritative Answer) **/
     public  final void setAA(boolean authOrNot) { aa = authOrNot; }
+
+    //  DNSSEC: Authentic Data and Checking Disabled (RFC 4035 3.2)
+    private boolean ad;
+    private boolean cd;
+
+    /** AD: the answer was validated (DNSSEC). */
+    public final boolean getAD() { return ad; }
+    public final void setAD(boolean b) { ad = b; }
+    /** CD: the client does its own validation, don't. */
+    public final boolean getCD() { return cd; }
+    public final void setCD(boolean b) { cd = b; }
     /** Set the value for ANCOUNT (Number of records in the answer section) **/
     public  final void setANCOUNT(int ansCount) { ancount = (short)ansCount; }
     /** 
@@ -301,7 +319,9 @@ public class Header extends Utility implements DNS
         if( rd ) { tmp = setBit(tmp, 8); } 
         if( ra ) { tmp = setBit(tmp, 7); } 
 
-        // z == 0 nothing to do for bits 6,5,4
+        // z == 0 nothing to do for bit 6; AD and CD (RFC 4035 3.2)
+        if( ad ) { tmp = setBit(tmp, 5); }
+        if( cd ) { tmp = setBit(tmp, 4); }
 
         //  Set bits 3,2,1,0 from rcode
         tmp = (tmp | (rcode & MASK));
@@ -326,6 +346,8 @@ public class Header extends Utility implements DNS
         ret.append(" tc="+tc);
         ret.append(" rd="+rd);
         ret.append(" ra="+ra);
+        ret.append(" ad="+ad);
+        ret.append(" cd="+cd);
 
 
         // z == 0 nothing to do for bits 6,5,4

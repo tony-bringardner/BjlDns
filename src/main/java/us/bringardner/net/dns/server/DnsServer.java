@@ -2312,9 +2312,11 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			return partial;
 		}
 		if( req.getPort() == -1 ) {
-			Message resolved = resolveOrNull(req.getCnameTarget());
+			us.bringardner.net.dns.resolve.Resolver.Answer a = resolveOrNull(req, req.getCnameTarget());
 			req.setCnameTarget(null);
-			return us.bringardner.net.dns.resolve.ResolverThread.completeCnameAnswer(partial, resolved);
+			Message ret = us.bringardner.net.dns.resolve.ResolverThread.completeCnameAnswer(partial, a == null ? null : a.msg);
+			us.bringardner.net.dns.resolve.ResolverThread.finish(ret, req, a == null ? null : a.result, true);
+			return ret;
 		}
 		req.setPartialAnswer(partial);
 		if( us.bringardner.net.dns.resolve.ResolverThread.addQuery(req) ) {
@@ -2335,10 +2337,10 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		}
 	}
 
-	/** Resolve in the calling thread; null if it fails. */
-	private Message resolveOrNull(Section s) {
+	/** Resolve (and validate) in the calling thread; null if it fails. */
+	private us.bringardner.net.dns.resolve.Resolver.Answer resolveOrNull(QueryData req, Section s) {
 		try {
-			return Resolver.resolve(s);
+			return us.bringardner.net.dns.resolve.ResolverThread.resolveFor(req, s);
 		} catch(RuntimeException | StackOverflowError ex) {
 			logError("Resolver failed for "+s, ex);
 			return null;
@@ -2351,14 +2353,14 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	 */
 	private Message resolveNow(QueryData question) {
 		Message ret = null;
-		try {
-			ret = Resolver.resolve(question.getQuestion());
-		} catch(RuntimeException | StackOverflowError ex) {
-			logError("Resolver failed for "+question.getQuestion(), ex);
+		us.bringardner.net.dns.resolve.Resolver.Answer a = resolveOrNull(question, question.getQuestion());
+		if( a != null ) {
+			ret = a.msg;
 		}
 		if( ret == null ) {
 			ret = us.bringardner.net.dns.resolve.ResolverThread.failure(question, DNS.SERVER_ERROR);
 		}
+		us.bringardner.net.dns.resolve.ResolverThread.finish(ret, question, a == null ? null : a.result, false);
 		return ret;
 	}
 

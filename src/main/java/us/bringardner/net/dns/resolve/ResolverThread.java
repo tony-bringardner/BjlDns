@@ -200,6 +200,61 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 		return ret;
 	}
 	
+	private static final java.util.concurrent.atomic.AtomicLong bogus = new java.util.concurrent.atomic.AtomicLong();
+
+	/** Answers that failed DNSSEC validation (the clients got SERVFAIL). */
+	public static long getBogus() {
+		return bogus.get();
+	}
+
+	/**
+	 * Resolve for a client, validating unless it set CD. An answer that
+	 * fails validation (BOGUS) is dropped: the Answer's msg is null, so the
+	 * client gets SERVFAIL (RFC 4035 5.5).
+	 */
+	public static Resolver.Answer resolveFor(QueryData query, Section toResolve) {
+		Resolver.Answer a = Resolver.resolveValidated(toResolve, query.getMessage().getHeader().getCD());
+		if( a.result != null && a.result.status == Validator.Status.BOGUS ) {
+			bogus.incrementAndGet();
+			new ResolverThread0().log("DNSSEC validation failed for "+toResolve+": "+a.result.why);
+			return new Resolver.Answer(null, a.result);
+		}
+		return a;
+	}
+
+	//  Only for logging from static code
+	private static final class ResolverThread0 extends us.bringardner.net.dns.DnsBaseClass {
+	}
+
+	/**
+	 * Shape a recursive answer for the client that asked (RFC 4035 3.2):
+	 * AD set only for a validated (SECURE) answer to a client that set DO or
+	 * AD; CD echoed; without DO the DNSSEC records (RRSIG, NSEC, NSEC3) are
+	 * removed unless they were asked for.
+	 * 
+	 * @param partial part of the answer came from our own zones (AD is not set)
+	 */
+	public static void finish(Message msg, QueryData query, Validator.Result result, boolean partial) {
+		if( msg == null ) {
+			return;
+		}
+		Message req = query.getMessage();
+		boolean dnssecOk = query.getEdns().isDnssecOk();
+		boolean secure = result != null && result.status == Validator.Status.SECURE && !partial;
+		msg.getHeader().setAD(secure && (dnssecOk || req.getHeader().getAD()));
+		msg.getHeader().setCD(req.getHeader().getCD());
+		if( !dnssecOk ) {
+			Section q = req.getFirstQuestion();
+			int qtype = q == null ? 0 : q.getType();
+			for(java.util.List<RR> section : java.util.Arrays.asList(msg.getAnswer(), msg.getAuthority(), msg.getAdditional())) {
+				section.removeIf(rr -> {
+					int t = rr.getType();
+					return (t == DNS.RRSIG || t == DNS.NSEC || t == DNS.NSEC3) && t != qtype;
+				});
+			}
+		}
+	}
+
 	public static int backlog() {
 		return fifo.getSize();
 	}
@@ -259,8 +314,11 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 					setState("Call Resolver", question);
 					Message msg = null;
 					Section toResolve = question.getResolveQuestion();
+					Validator.Result validated = null;
 					try {
-						msg = Resolver.resolve(toResolve);
+						Resolver.Answer a = resolveFor(question, toResolve);
+						msg = a.msg;
+						validated = a.result;
 					} catch(RuntimeException | StackOverflowError ex) {
 						logError("Resolver failed for "+toResolve, ex);
 					}
@@ -278,6 +336,7 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 						failed.incrementAndGet();
 						msg = failure(question, DNS.SERVER_ERROR);
 					}
+					finish(msg, question, validated, partial != null);
 					sendResponse(msg,question);
 				}
 			} catch(InterruptedException ex) {

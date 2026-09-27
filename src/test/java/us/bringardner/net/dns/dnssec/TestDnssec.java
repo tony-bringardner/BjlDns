@@ -399,8 +399,13 @@ public class TestDnssec {
 
 	@Test
 	public void unsupportedAlgorithm() {
-		assertThrows(IllegalArgumentException.class, () -> Algorithm.of(5));
+		assertThrows(IllegalArgumentException.class, () -> Algorithm.of(3));
 		assertThrows(IllegalArgumentException.class, () -> Algorithm.of("DSA"));
+		//  RSA/SHA-1 is validated but never used to sign (RFC 8624)
+		assertFalse(Algorithm.of(Algorithm.RSASHA1).canSign());
+		assertFalse(Algorithm.of(Algorithm.RSASHA1_NSEC3_SHA1).canSign());
+		assertThrows(IllegalArgumentException.class, () -> Algorithm.of("RSASHA1"));
+		assertThrows(java.security.GeneralSecurityException.class, () -> DnssecKey.generate("x.test", Algorithm.of(5), true, 0));
 		assertNotNull(Algorithm.of("RSASHA256"));
 		assertEquals(Algorithm.ED25519, Algorithm.of("ed25519").getNumber());
 	}

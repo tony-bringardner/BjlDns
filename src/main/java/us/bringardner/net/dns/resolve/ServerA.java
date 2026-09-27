@@ -238,6 +238,13 @@ public class ServerA  extends DnsBaseClass
 		qm.setQuestion(q);
 		qm.setTimeOut(Math.max(1, timeoutMs));
 		qm.setRetry(QUERY_RETRY);
+		if( Resolver.isValidating() ) {
+			//  Ask for the DNSSEC records (DO, RFC 3225) and, should this be a
+			//  recursive server, for answers it could not validate itself (CD):
+			//  we validate them
+			qm.addAdditional(us.bringardner.net.dns.Edns.newOpt(0, true));
+			qm.getHeader().setCD(true);
+		}
 
 		long start = System.currentTimeMillis();
 		lastReq = start;

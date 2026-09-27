@@ -35,6 +35,7 @@ import us.bringardner.net.dns.Cname;
 import us.bringardner.net.dns.DNS;
 import us.bringardner.net.dns.Message;
 import us.bringardner.net.dns.Nsec;
+import us.bringardner.net.dns.Nsec3;
 import us.bringardner.net.dns.RR;
 import us.bringardner.net.dns.Rrsig;
 import us.bringardner.net.dns.dnssec.Canonical;
@@ -165,7 +166,14 @@ final class DnssecResponder {
 					}
 				} else if( sz.isNsec3() ) {
 					//  RFC 5155 7.2.7: the NSEC3 of the delegation, without the DS bit
-					addNsec(sz, sz.nsec3Matching(cut), done, authorityAdds);
+					//  (in an opt-out zone an unsigned delegation may have none:
+					//  then the proof that it is covered by an opt-out NSEC3)
+					Nsec3 at = sz.nsec3Matching(cut);
+					if( at != null ) {
+						addNsec(sz, at, done, authorityAdds);
+					} else {
+						closestProvableEncloser(sz, cut, done, authorityAdds);
+					}
 				} else {
 					addNsec(sz, sz.nsecAt(cut), done, authorityAdds);
 				}
@@ -185,7 +193,13 @@ final class DnssecResponder {
 	 */
 	private static void nsec3Denial(SignedZone sz, String name, boolean nxdomain, Set<String> done, List<RR> out) {
 		if( !nxdomain && (sz.exists(name) || sz.isEmptyNonTerminal(name)) ) {
-			addNsec(sz, sz.nsec3Matching(name), done, out);
+			Nsec3 at = sz.nsec3Matching(name);
+			if( at != null ) {
+				addNsec(sz, at, done, out);
+			} else {
+				//  An unsigned delegation in an opt-out zone (RFC 5155 7.2.4)
+				closestProvableEncloser(sz, name, done, out);
+			}
 			return;
 		}
 		String ce = sz.closestEncloser(name);
@@ -193,6 +207,26 @@ final class DnssecResponder {
 		addNsec(sz, sz.nsec3Covering(nextCloser(name, ce)), done, out);
 		String wild = "*."+ce;
 		addNsec(sz, nxdomain ? sz.nsec3Covering(wild) : sz.nsec3Matching(wild), done, out);
+	}
+
+	/**
+	 * The closest provable encloser proof (RFC 5155 7.2.1): the NSEC3 of the
+	 * nearest ancestor that has one, and the NSEC3 covering the next closer
+	 * name (with the opt-out flag, for an unsigned delegation).
+	 */
+	private static void closestProvableEncloser(SignedZone sz, String name, Set<String> done, List<RR> out) {
+		String ce = Canonical.key(name);
+		Nsec3 match = null;
+		while( match == null && !ce.equals(sz.apex) && ce.indexOf('.') >= 0 ) {
+			ce = ce.substring(ce.indexOf('.')+1);
+			match = sz.nsec3Matching(ce);
+		}
+		if( match == null ) {
+			match = sz.nsec3Matching(sz.apex);
+			ce = sz.apex;
+		}
+		addNsec(sz, match, done, out);
+		addNsec(sz, sz.nsec3Covering(nextCloser(name, ce)), done, out);
 	}
 
 	/** The name one label longer than the closest encloser, on the way to name. */
