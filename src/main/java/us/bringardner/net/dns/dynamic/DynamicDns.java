@@ -114,7 +114,7 @@ public class DynamicDns extends DnsBaseClass {
 		String driver = us.bringardner.net.dns.RenamedProperty.get(PROP_DYNAMIC_DRIVER, "DnsDriver", "com.mysql.cj.jdbc.Driver");  // was org.gjt.mm.mysql.Driver, removed in Connector/J 8
 		String url = us.bringardner.net.dns.RenamedProperty.get(PROP_DYNAMIC_URL, "DynUrl", "jdbc:mysql://mail.bringardner.us:3306/email");
 		String user = us.bringardner.net.dns.RenamedProperty.get(PROP_DYNAMIC_USER, "DynUser", "tony");
-		String password = us.bringardner.net.dns.RenamedProperty.get(PROP_DYNAMIC_PASSWORD, "DynPassword", "0000");
+		String password = us.bringardner.net.dns.RenamedProperty.get(PROP_DYNAMIC_PASSWORD, "DynPassword", "1111");
 		Connection con = null;
 		Class.forName(driver);
 		con = DriverManager.getConnection(url, user, password);

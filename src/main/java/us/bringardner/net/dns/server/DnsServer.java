@@ -1099,19 +1099,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		flushDynamicSigning();
 	}
 
-	/*
-	private Connection getDynDnsConnection() throws ClassNotFoundException, SQLException {
-		String driver = getProperty(PROP_DYNAMIC_DRIVER,"org.gjt.mm.mysql.Driver");
-		String url = getProperty(PROP_DYNAMIC_URL,"jdbc:mysql://mail.bringardner.com:3306/email");
-		String user = getProperty(PROP_DYNAMIC_USER,"tony");
-		String password = getProperty(PROP_DYNAMIC_PASSWORD,"0000");
-		Connection con = null;
-		Class.forName(driver);
-		con = DriverManager.getConnection(url, user, password);
-		return con;
-	}
-	 */
-
+	
 	/**
 	 * Add or change a dynamic entry. The store (database, or the dynamic file
 	 * when there is no database) is written FIRST; memory changes only if that
