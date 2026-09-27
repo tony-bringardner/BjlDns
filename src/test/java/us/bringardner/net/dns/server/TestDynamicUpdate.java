@@ -52,7 +52,6 @@ import us.bringardner.net.dns.Message;
 import us.bringardner.net.dns.Mx;
 import us.bringardner.net.dns.Ns;
 import us.bringardner.net.dns.RR;
-import us.bringardner.net.dns.Section;
 import us.bringardner.net.dns.Soa;
 import us.bringardner.net.dns.Tsig;
 import us.bringardner.net.dns.resolve.QueryData;
