@@ -202,9 +202,8 @@ public void run ()
 				setState("Running before process");
 				QueryData query = new QueryData(client,port,msg);
 				query.setWire(wire);
-				if( msg.getQuestionCount()>0) {
-					process(query);
-				}
+				//  (a request without exactly one question gets FORMERR from the server)
+				process(query);
 				setState("Running after process");
 			} catch(DnsFormatException ex) {
 				// Malformed packet (e.g. compression loop). Answer FORMERR and keep going.
