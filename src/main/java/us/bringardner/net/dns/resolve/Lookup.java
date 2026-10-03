@@ -86,7 +86,7 @@ public final class Lookup {
 	 * RFC 6376 3.6.2.2), in answer order.
 	 */
 	public static LookupResult<String> txt(String name) {
-		return lookup(name, DNS.TXT, rr -> (rr instanceof Txt ? (Txt)rr : new Txt(rr)).getText());
+		return lookup(name, DNS.TXT, TXT_TEXT);
 	}
 
 	/** IPv4 addresses (A records) of a name. */
@@ -171,12 +171,61 @@ public final class Lookup {
 	}
 
 	/**
+	 * Turn a TXT response that was obtained some other way (e.g. from a query
+	 * sent to a recursive server) into a result, with the same rules as
+	 * {@link #txt(String)}. A null response is TEMPFAIL. A CNAME target is not
+	 * queried again: a recursive server already gives its RCODE (RFC 6604).
+	 */
+	public static LookupResult<String> txt(String name, Message response) {
+		return fromResponse(name, DNS.TXT, response, TXT_TEXT);
+	}
+
+	/**
+	 * Turn a response that was obtained some other way into a result.
+	 * @param map record to value; a null value is skipped
+	 * @see #txt(String, Message)
+	 */
+	public static <T> LookupResult<T> fromResponse(String name, int type, Message response, Function<RR, T> map) {
+		return classify(normalize(name), type, response, map);
+	}
+
+	private static final Function<RR, String> TXT_TEXT = rr -> (rr instanceof Txt ? (Txt)rr : new Txt(rr)).getText();
+
+	/**
 	 * Resolve name/type (class IN) and turn the response into a result.
 	 * @param map record to value; a null value is skipped
 	 */
 	static <T> LookupResult<T> lookup(String name, int type, Function<RR, T> map) {
 		String n = normalize(name);
 		Message m = ask(n, type);
+		LookupResult<T> r = classify(n, type, m, map);
+		if( r.getStatus() != LookupResult.Status.NODATA ) {
+			return r;
+		}
+
+		//  A CNAME whose target does not exist: the resolver combines the chain
+		//  under the first response's RCODE (NOERROR), so ask about the target
+		//  (from the cache) to get its own RCODE (RFC 6604).
+		String target = cnameTarget(m, n);
+		if( target != null ) {
+			Message t = ask(target, type);
+			if( t == null ) {
+				return new LookupResult<T>(n, type, LookupResult.Status.TEMPFAIL, null, -1, m);
+			}
+			int trc = t.getResponseCode();
+			if( trc == DNS.NAME_ERROR ) {
+				return new LookupResult<T>(n, type, LookupResult.Status.NXDOMAIN, null, trc, t);
+			}
+			if( trc != DNS.NOERROR ) {
+				return new LookupResult<T>(n, type, LookupResult.Status.TEMPFAIL, null, trc, t);
+			}
+		}
+		//  Also the result for a CNAME loop or a chain too long to follow
+		return r;
+	}
+
+	/** The result for one response (null: no response). */
+	private static <T> LookupResult<T> classify(String n, int type, Message m, Function<RR, T> map) {
 		if( m == null ) {
 			return new LookupResult<T>(n, type, LookupResult.Status.TEMPFAIL, null, -1, null);
 		}
@@ -207,25 +256,6 @@ public final class Lookup {
 		if( !values.isEmpty() ) {
 			return new LookupResult<T>(n, type, LookupResult.Status.OK, values, rcode, m);
 		}
-
-		//  A CNAME whose target does not exist: the resolver combines the chain
-		//  under the first response's RCODE (NOERROR), so ask about the target
-		//  (from the cache) to get its own RCODE (RFC 6604).
-		String target = cnameTarget(m, n);
-		if( target != null ) {
-			Message t = ask(target, type);
-			if( t == null ) {
-				return new LookupResult<T>(n, type, LookupResult.Status.TEMPFAIL, null, -1, m);
-			}
-			int trc = t.getResponseCode();
-			if( trc == DNS.NAME_ERROR ) {
-				return new LookupResult<T>(n, type, LookupResult.Status.NXDOMAIN, null, trc, t);
-			}
-			if( trc != DNS.NOERROR ) {
-				return new LookupResult<T>(n, type, LookupResult.Status.TEMPFAIL, null, trc, t);
-			}
-		}
-		//  Also the result for a CNAME loop or a chain too long to follow
 		return new LookupResult<T>(n, type, LookupResult.Status.NODATA, null, rcode, m);
 	}
 
