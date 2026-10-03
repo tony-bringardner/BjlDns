@@ -97,6 +97,7 @@ switch( r.getStatus() ) {
 
 + `txt(name)`, `a(name)`, `aaaa(name)`, `addresses(name)` (A then AAAA), `mx(name)` (lowest preference first), `ptr(InetAddress)` / `ptr("192.0.2.1")`, and `records(name, type)` for any other type.
 + CNAMEs are followed; only records of the type asked are returned. A CNAME to a name that does not exist gives NXDOMAIN.
++ `Lookup.txt(name, response)` and `Lookup.fromResponse(...)` apply the same rules to a response you got another way, e.g. from a query sent straight to a recursive server (BjlEmail's stub resolver does this for DKIM keys).
 + Answers come from and go into the resolver cache. The resolver must be initialized (`Resolver.initResolver()`); with no servers configured a lookup that misses the cache is TEMPFAIL.
 
 `us.bringardner.net.dns.ReverseName` makes the `in-addr.arpa` / `ip6.arpa` name of an address (`ReverseName.of(addr)`, or `of("2001:db8::1")`, which returns null for text that is not an address literal) and turns one back into an address (`toAddress`).
