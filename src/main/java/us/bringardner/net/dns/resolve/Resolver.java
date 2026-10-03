@@ -120,11 +120,21 @@ public class Resolver  extends DnsBaseClass
 	 * validate the answer.
 	 */
 	public static Answer resolveValidated(Section question, boolean checkingDisabled) {
-		Message m = resolve(question);
 		Validator v = validator;
+		if( v != null && !checkingDisabled ) {
+			//  Validated before: the result is kept with the cache entry
+			Cache.Hit h = cache.lookup(question);
+			if( h != null && h.validated != null && !isUnchasedCname(h.msg, question) ) {
+				cacheHits.incrementAndGet();
+				return new Answer(h.msg, h.validated);
+			}
+		}
+		Message m = resolve(question);
 		if( m == null || v == null || checkingDisabled ) {
 			return new Answer(m, null);
 		}
+		//  The entry m came from (or was stored as); the result is attached to it
+		Object entry = cache.current(question);
 		Validator.Result r;
 		try {
 			r = v.validate(m, question);
@@ -132,7 +142,48 @@ public class Resolver  extends DnsBaseClass
 			new Resolver().logError("DNSSEC validation of "+question+" failed", ex);
 			r = new Validator.Result(Validator.Status.BOGUS, "validation failed: "+ex);
 		}
+		cache.setValidated(question, entry, r);
 		return new Answer(m, r);
+	}
+
+	//  Recursive queries answered from the cache by resolveCached
+	private static final java.util.concurrent.atomic.AtomicLong cacheHits = new java.util.concurrent.atomic.AtomicLong();
+
+	/** Recursive queries answered from the cache without a resolver thread (or validation). */
+	public static long getCacheHits() {
+		return cacheHits.get();
+	}
+
+	/**
+	 * The answer to 'question' from the cache alone: no network, no
+	 * validation, so it can run in the thread that received the query.
+	 * <p>
+	 * null if a resolver thread is needed: nothing cached, a CNAME whose
+	 * target still has to be resolved, or (validation on and CD not set) a
+	 * response that has not been validated yet.
+	 */
+	public static Answer resolveCached(Section question, boolean checkingDisabled) {
+		Cache.Hit h = cache.lookup(question);
+		if( h == null || isUnchasedCname(h.msg, question) ) {
+			return null;
+		}
+		Validator.Result r = null;
+		if( validator != null && !checkingDisabled ) {
+			if( h.validated == null || h.validated.status == Validator.Status.BOGUS ) {
+				return null;
+			}
+			r = h.validated;
+		}
+		cacheHits.incrementAndGet();
+		return new Answer(h.msg, r);
+	}
+
+	/** A cached response that is only a CNAME: resolveChain still follows it to the target. */
+	private static boolean isUnchasedCname(Message m, Section question) {
+		if( m.getAnswerCount() != 1 || question.getType() == DNS.CNAME ) {
+			return false;
+		}
+		return m.getAnswer().get(0).getType() == DNS.CNAME;
 	}
 
 	/** A zone's name servers learned from a referral. */
@@ -315,6 +366,7 @@ public class Resolver  extends DnsBaseClass
 				" dropped(backlog full)="+ResolverThread.getDropped()+
 				" servfail="+ResolverThread.getFailed()+
 				" completed="+completed+
+				" cacheHits="+cacheHits.get()+
 				" min="+min+
 				" max="+max+
 				" ave="+ave

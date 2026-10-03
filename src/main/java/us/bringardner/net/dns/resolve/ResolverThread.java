@@ -222,6 +222,17 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 		return a;
 	}
 
+	/**
+	 * The answer for a recursive query from the cache alone (no network), or
+	 * null if a resolver thread is needed. Used by the UDP processor so that
+	 * cached names are answered at once instead of waiting in the resolver
+	 * queue behind slow lookups (with 10 threads busy on names that time out,
+	 * the queue filled and cached names got SERVFAIL too).
+	 */
+	public static Resolver.Answer cachedFor(QueryData query, Section toResolve) {
+		return Resolver.resolveCached(toResolve, query.getMessage().getHeader().getCD());
+	}
+
 	//  Only for logging from static code
 	private static final class ResolverThread0 extends us.bringardner.net.dns.DnsBaseClass {
 	}
@@ -241,6 +252,12 @@ public class ResolverThread extends us.bringardner.net.dns.DnsBaseClass implemen
 		Message req = query.getMessage();
 		boolean dnssecOk = query.getEdns().isDnssecOk();
 		boolean secure = result != null && result.status == Validator.Status.SECURE && !partial;
+		//  A recursive answer (often from the cache): not authoritative,
+		//  recursion available, RD as the client sent it. The upstream
+		//  server's header used to be passed on (AA=1, RA=0, RD=0).
+		msg.getHeader().setAA(false);
+		msg.getHeader().setRA(true);
+		msg.getHeader().setRD(req.getHeader().getRD());
 		msg.getHeader().setAD(secure && (dnssecOk || req.getHeader().getAD()));
 		msg.getHeader().setCD(req.getHeader().getCD());
 		if( !dnssecOk ) {
