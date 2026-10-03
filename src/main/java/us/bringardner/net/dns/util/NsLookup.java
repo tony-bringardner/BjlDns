@@ -852,41 +852,7 @@ public class NsLookup extends Utility {
 
 	/** in-addr.arpa / ip6.arpa name for an IPv4 or IPv6 address, else null. */
 	static String reverseName(String text) {
-		Matcher m = Pattern.compile("([0-9]{1,3})\\.([0-9]{1,3})\\.([0-9]{1,3})\\.([0-9]{1,3})").matcher(text);
-		if( m.matches() ) {
-			StringBuilder sb = new StringBuilder();
-			for(int i=4; i >= 1; i-- ) {
-				int b = Integer.parseInt(m.group(i));
-				if( b > 255 ) {
-					return null;
-				}
-				sb.append(b).append('.');
-			}
-			return sb.append("in-addr.arpa").toString();
-		}
-		if( text.indexOf(':') >= 0 && text.matches("[0-9A-Fa-f:.]+") ) {
-			byte [] a;
-			try {
-				a = InetAddress.getByName(text).getAddress();
-			} catch(UnknownHostException ex) {
-				return null;
-			}
-			if( a.length == 4 ) {
-				//  ::ffff:a.b.c.d (Java makes it an IPv4 address)
-				byte [] mapped = new byte[16];
-				mapped[10] = (byte)0xff;
-				mapped[11] = (byte)0xff;
-				System.arraycopy(a, 0, mapped, 12, 4);
-				a = mapped;
-			}
-			StringBuilder sb = new StringBuilder();
-			for(int i=15; i >= 0; i-- ) {
-				sb.append(Character.forDigit(a[i] & 0xf, 16)).append('.');
-				sb.append(Character.forDigit((a[i] >> 4) & 0xf, 16)).append('.');
-			}
-			return sb.append("ip6.arpa").toString();
-		}
-		return null;
+		return us.bringardner.net.dns.ReverseName.of(text);
 	}
 
 	/**

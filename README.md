@@ -81,6 +81,26 @@ Dependencies:
 + BjlIo
  			
 
+# Typed lookups (client API)
+
+`us.bringardner.net.dns.resolve.Lookup` asks the resolver for one record type and returns the values with a status, for code such as SPF, DKIM and DMARC checks that needs to tell "no such name" from "no record" from "try again later".
+
+```java
+LookupResult<String> r = Lookup.txt("_dmarc.example.com");
+switch( r.getStatus() ) {
+    case OK:       use(r.getValues()); break;   // each TXT record's strings joined
+    case NXDOMAIN:                               // the name does not exist
+    case NODATA:   noRecord(); break;            // the name exists, no TXT record
+    case TEMPFAIL: tryLater(); break;            // timeout, SERVFAIL, REFUSED...
+}
+```
+
++ `txt(name)`, `a(name)`, `aaaa(name)`, `addresses(name)` (A then AAAA), `mx(name)` (lowest preference first), `ptr(InetAddress)` / `ptr("192.0.2.1")`, and `records(name, type)` for any other type.
++ CNAMEs are followed; only records of the type asked are returned. A CNAME to a name that does not exist gives NXDOMAIN.
++ Answers come from and go into the resolver cache. The resolver must be initialized (`Resolver.initResolver()`); with no servers configured a lookup that misses the cache is TEMPFAIL.
+
+`us.bringardner.net.dns.ReverseName` makes the `in-addr.arpa` / `ip6.arpa` name of an address (`ReverseName.of(addr)`, or `of("2001:db8::1")`, which returns null for text that is not an address literal) and turns one back into an address (`toAddress`).
+
 # NsLookup
 
 `us.bringardner.net.dns.util.NsLookup` works like the Linux (ISC BIND 9) `nslookup`: the same command line, interactive commands, options, output and exit status. Its output was checked line by line against `nslookup` 9.18 (`TestNsLookupOffline` replays the recorded output).
