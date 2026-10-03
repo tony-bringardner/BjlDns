@@ -75,6 +75,10 @@ public class Resolver  extends DnsBaseClass
 	/** seconds, default 10800 (3 hours) */
 	public static final String PROP_MAX_NEGATIVE_TTL = "JDns.maxNegativeTtl";
 	public static final String PROP_DELEGATION_MAX_AGE = "JDns.delegationMaxAge";
+	/** Seconds an upstream address is skipped after repeated failures (first hold-off, doubled for each further failure). */
+	public static final String PROP_UPSTREAM_HOLD_OFF_MIN = "JDns.upstreamHoldOffMin";
+	/** Longest hold-off (seconds) for an upstream address that keeps failing. */
+	public static final String PROP_UPSTREAM_HOLD_OFF_MAX = "JDns.upstreamHoldOffMax";
 	/** Validate the answers of recursive queries with DNSSEC (default false). */
 	public static final String PROP_DNSSEC_VALIDATION = "JDns.dnssecValidation";
 	/** File of trust anchors (DS or DNSKEY records); relative to JDns.dnsDir. Default: the root zone's keys, built in. */
@@ -440,6 +444,21 @@ public class Resolver  extends DnsBaseClass
 			}
 		}
 
+		if( (tmp=prop.getProperty(PROP_UPSTREAM_HOLD_OFF_MIN)) != null ) {
+			try {
+				ServerA.HOLD_OFF_MIN = Math.max(1, Long.parseLong(tmp.trim()))*1000L;
+			} catch(Exception ex) {
+				new Resolver().logError("Error setting "+PROP_UPSTREAM_HOLD_OFF_MIN,ex);
+			}
+		}
+		if( (tmp=prop.getProperty(PROP_UPSTREAM_HOLD_OFF_MAX)) != null ) {
+			try {
+				ServerA.DEACTIVATE = Math.max(1, Long.parseLong(tmp.trim()))*1000L;
+			} catch(Exception ex) {
+				new Resolver().logError("Error setting "+PROP_UPSTREAM_HOLD_OFF_MAX,ex);
+			}
+		}
+
 		//  DNSSEC validation
 		String val = prop.getProperty(PROP_DNSSEC_VALIDATION);
 		if( val != null && val.trim().equalsIgnoreCase("true") ) {
@@ -671,9 +690,25 @@ public class Resolver  extends DnsBaseClass
 		RemoteServer svr = null;
 
 		long maxTime = deadline;
+		//  The zones' servers that are available; if none is (all held off after
+		//  failures), the one that comes back first: RemoteServer.resolve then
+		//  probes it. Recursion used to stop here until a hold-off ended.
+		List<RemoteServer> candidates = new java.util.ArrayList<RemoteServer>(slist.size());
+		RemoteServer first = null;
+		for(RemoteServer r : slist) {
+			if( r.isActive() ) {
+				candidates.add(r);
+			} else if( first == null || r.reactivatesAt() < first.reactivatesAt() ) {
+				first = r;
+			}
+		}
+		if( candidates.isEmpty() && first != null ) {
+			candidates.add(first);
+		}
+		slist = candidates;
 		for(int idx=0,sz=slist.size(); idx < sz; idx++ ) {
 			svr = slist.get(idx);
-			if( svr.isActive() ) {
+			{
 				if( (ret = svr.resolve(question,maxTime)) != null) {
 					if( ret.isRecursive() ) {
 						//The server did the work so we're done

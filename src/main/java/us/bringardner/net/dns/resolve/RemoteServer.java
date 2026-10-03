@@ -204,30 +204,59 @@ public class RemoteServer  extends DnsBaseClass {
 	public Message resolve(Section nm, long deadline) {
 		Message ret = null;
 		ServerA svr = null;
+		boolean tried = false;
 		Iterator<ServerA> it = this.iterator();
 		while( it.hasNext() ) {
 			long remaining = deadline - System.currentTimeMillis();
 			if( remaining <= 0 ) {
-				break;
+				return null;
 			}
 			svr = (ServerA)it.next();
 			if( !svr.isActive() ) {
 				continue;
 			}
-			if( (ret=svr.query(nm, svr.timeoutFor(remaining))) != null ) {
-				if( ret.getResponseCode() == DNS.NAME_ERROR ) {
-					//lastUsed = System.currentTimeMillis();
-					return ret;
-				}
-				if(ret.getAnswerCount() > 0 || ret.getNSCount() > 0) 
-				{
-					//lastUsed = System.currentTimeMillis();
+			tried = true;
+			if( usable(ret=svr.query(nm, svr.timeoutFor(remaining), deadline, false)) ) {
+				return ret;
+			}
+		}
+		if( !tried ) {
+			//  Every address is held off: probe the one that comes back first
+			//  (at most one probe per address and second), so the zone is found
+			//  again soon after an outage ends instead of when the hold-off ends.
+			ServerA next = soonest();
+			long remaining = deadline - System.currentTimeMillis();
+			if( next != null && remaining > 0 ) {
+				ret = next.query(nm, next.timeoutFor(remaining), deadline, true);
+				if( usable(ret) ) {
 					return ret;
 				}
 			}
 		}
 
 		return null;
+	}
+
+	/** An answer, NXDOMAIN or a referral (anything with records). */
+	private static boolean usable(Message ret) {
+		return ret != null && (ret.getResponseCode() == DNS.NAME_ERROR || ret.getAnswerCount() > 0 || ret.getNSCount() > 0);
+	}
+
+	/** The address whose hold-off ends first, or null if there are none. */
+	private ServerA soonest() {
+		ServerA ret = null;
+		for(ServerA s : addr) {
+			if( ret == null || s.getInactiveUntil() < ret.getInactiveUntil() ) {
+				ret = s;
+			}
+		}
+		return ret;
+	}
+
+	/** When an address of this zone is available again (ms); a past time if one is now. */
+	public long reactivatesAt() {
+		ServerA s = soonest();
+		return s == null ? Long.MAX_VALUE : (isActive() ? 0 : s.getInactiveUntil());
 	}
 
 	public void setName(String newName ) {
