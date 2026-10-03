@@ -76,6 +76,7 @@ import us.bringardner.net.dns.Utility;
 import us.bringardner.net.dns.dnssec.Canonical;
 import us.bringardner.net.dns.dnssec.DnssecKey;
 import us.bringardner.net.dns.resolve.QueryData;
+import us.bringardner.core.util.AddressMatcher;
 import us.bringardner.net.dns.resolve.Resolver;
 
 /**

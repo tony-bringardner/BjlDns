@@ -40,6 +40,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import us.bringardner.net.dns.ByteBuffer;
 import us.bringardner.net.dns.DNS;
 import us.bringardner.net.dns.DnsBaseClass;
+import us.bringardner.core.util.AddressMatcher;
 import us.bringardner.net.dns.Message;
 
 /**
