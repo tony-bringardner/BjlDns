@@ -62,9 +62,10 @@ public QueryData(InetAddress myClient, int myPort, Message myQuestion)
 	client = myClient;
 	port = myPort;
 	msg= myQuestion;
-	question = (Section)msg.getQuestion().get(0);
-	
-	
+	//  null when the request has no question (QDCOUNT 0): the server answers
+	//  FORMERR. It used to throw IndexOutOfBoundsException here, which was
+	//  logged as an unexpected error, with a stack trace, for every such packet.
+	question = msg.getQuestionCount() > 0 ? (Section)msg.getQuestion().get(0) : null;
 }
 /**
  * Insert the method's description here.

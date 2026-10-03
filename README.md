@@ -164,6 +164,8 @@ java -Xmx256m -XX:+ExitOnOutOfMemoryError \
 
 If the server can't start (bad configuration, missing zone directory, a port in use), `DnsServer.main` logs why and exits with -1 (configuration, zones, UDP/TCP sockets) or -2 (admin socket). Applications that embed the server call `start()` and then `awaitStarted(timeoutMs)`, which throws `DnsServer.StartupException` with the cause and stops anything that had started; the server itself never calls `System.exit`.
 
+Malformed requests are answered cheaply and never logged as errors: a request without exactly one question (QDCOUNT 0 or more than 1, RFC 9619; for UPDATE, ZOCOUNT ≠ 1) gets one FORMERR with no question section, and a packet with QR=1 (a response) gets no reply at all. `DnsServer.getQuestionCountErrors()` counts the FORMERRs.
+
 Example systemd unit:
 
 ```

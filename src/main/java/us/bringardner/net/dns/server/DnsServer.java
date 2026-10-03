@@ -1581,12 +1581,14 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		hdr.setAA(false);
 
 
-		//  Only queries are supported
 		if( !reqMsg.isQuery() ) {
-			Message  retMsg = new Message();
-			retMsg.setHeader(hdr);
-			retMsg.setResponseCodeRefused();
-			ret.add(retMsg);
+			//  A response (QR=1) is never answered (RFC 1035 4.1.1). It used to
+			//  get a REFUSED reply, so a spoofed response sent to two servers
+			//  could bounce between them.
+			final int qr = reqMsg.getQuestionCount();
+			log(() -> "Ignored a response (QR=1, "+qr+" questions) from "+req.getClient());
+		} else if( reqMsg.getQuestionCount() != 1 ) {
+			ret.add(questionCountError(req, hdr));
 		} else if( hdr.getOPCODE() == DNS.UPDATE ) {
 			ret.add(update(req, hdr));
 		} else if( hdr.getOPCODE() != DNS.QUERY ) {
@@ -1632,6 +1634,37 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		return ret;
 	}
 
+
+	//  Requests answered FORMERR because they did not have exactly one question
+	private static final java.util.concurrent.atomic.AtomicLong questionCountErrors = new java.util.concurrent.atomic.AtomicLong();
+
+	/** Requests answered FORMERR because QDCOUNT (ZOCOUNT for UPDATE) was not 1. */
+	public static long getQuestionCountErrors() {
+		return questionCountErrors.get();
+	}
+
+	/**
+	 * FORMERR for a request that does not have exactly one question (RFC 9619;
+	 * for UPDATE, one zone, RFC 2136 3.1.1). The response has no question
+	 * section, so it is never bigger than a header (plus OPT / TSIG).
+	 * <p>
+	 * Every question used to get its own response, and each one answered the
+	 * first question again: one 2 KB UDP packet with about 400 copies of a
+	 * 5 byte question got about 400 responses (reflection amplification),
+	 * or filled the resolver backlog in one go. A request without a question
+	 * threw IndexOutOfBoundsException, logged with a stack trace each time.
+	 */
+	private Message questionCountError(QueryData req, Header hdr) {
+		questionCountErrors.incrementAndGet();
+		final int n = req.getMessage().getQuestionCount();
+		log(() -> "FORMERR for a request with "+n+" questions from "+req.getClient());
+		Message ret = new Message();
+		ret.setHeader(hdr);
+		ret.setMessageTypeResponse();
+		ret.getHeader().setTC(false);
+		ret.setResponseCodeFormatError();
+		return ret;
+	}
 
 	/**
 	 * Delete a domain from our domain list
