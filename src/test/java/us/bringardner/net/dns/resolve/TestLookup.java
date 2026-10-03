@@ -319,6 +319,23 @@ public class TestLookup {
 	}
 
 	@Test
+	public void classifyResponseFromElsewhere() {
+		Message ok = response("x.example.com", DNS.TXT, DNS.NOERROR, txt("x.example.com", "a", "b"));
+		answers.clear();
+		LookupResult<String> r = Lookup.txt("x.example.com.", ok);
+		assertEquals(Arrays.asList("ab"), r.getValues());
+		assertTrue(asked.isEmpty());
+		assertEquals(Status.TEMPFAIL, Lookup.txt("x.example.com", null).getStatus());
+		Message nx = response("y.example.com", DNS.TXT, DNS.NAME_ERROR);
+		assertEquals(Status.NXDOMAIN, Lookup.txt("y.example.com", nx).getStatus());
+		//  No second query for a CNAME target
+		Message cn = response("z.example.com", DNS.TXT, DNS.NOERROR, cname("z.example.com", "t.example.net"));
+		assertEquals(Status.NODATA, Lookup.txt("z.example.com", cn).getStatus());
+		assertTrue(asked.isEmpty());
+		assertEquals(Status.OK, Lookup.fromResponse("x.example.com", DNS.TXT, ok, rr -> rr).getStatus());
+	}
+
+	@Test
 	public void throughResolverCache() {
 		//  The real Resolver, answered from its cache (no network)
 		Lookup.resolver = saved;
