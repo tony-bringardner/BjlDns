@@ -44,13 +44,22 @@ import us.bringardner.net.dns.Section;
  * statistics / state are atomic or volatile.
  * <p>
  * After more than MAX_TRIES consecutive failures the server is marked
- * inactive for DEACTIVATE ms. When that time has passed it gets one more
- * try; if that also fails it is deactivated again.
+ * inactive for a hold-off that starts at HOLD_OFF_MIN ms and doubles with
+ * every further failure, up to DEACTIVATE ms. When the hold-off has passed
+ * it gets one more try. Any answer makes it active again.
+ * <p>
+ * It used to be inactive for a whole hour after 3 failures: a short network
+ * outage (a router restart) turned off every root server address and all
+ * recursion failed for the next hour.
  */
 public class ServerA  extends DnsBaseClass
 {
-	//  One Hour
-	public static long DEACTIVATE=(1*60*60*1000);  
+	/** Longest hold-off (ms) for a server that keeps failing (default 10 minutes, JDns.upstreamHoldOffMax). */
+	public static volatile long DEACTIVATE=10*60*1000L;
+	/** First hold-off (ms) after MAX_TRIES+1 failures in a row (default 5 s, JDns.upstreamHoldOffMin). */
+	public static volatile long HOLD_OFF_MIN=5*1000L;
+	/** A server that is held off is probed at most this often (ms) when no server of its zone is available. */
+	public static volatile long PROBE_INTERVAL=1000L;
 	public static int MAX_TRIES=2;
 	/** Per-attempt timeout (ms) and attempts per query sent to one upstream address */
 	public static int QUERY_TIMEOUT = 2000;
@@ -63,6 +72,8 @@ public class ServerA  extends DnsBaseClass
 	private volatile long lastReq = 0;
 	//  Inactive until this time (ms). 0 == active
 	private volatile long inactiveUntil = 0;
+	//  No probe (query while inactive) before this time (ms)
+	private final AtomicLong nextProbe = new AtomicLong();
 
 	private volatile String name;
 	private volatile String addrStr;
@@ -213,7 +224,21 @@ public class ServerA  extends DnsBaseClass
 	 * @return the response, or null (inactive, no address, no answer)
 	 */
 	public Message query(Section q, int timeoutMs) {
-		if( !isActive() ) {
+		return query(q, timeoutMs, 0, false);
+	}
+
+	/**
+	 * Send a query to this server.
+	 * 
+	 * @param timeoutMs longest wait per attempt
+	 * @param deadline absolute time (ms) after which the query gives up,
+	 *  including a TCP retry after a truncated answer; 0 for none
+	 * @param probe query even if the server is inactive, when tryProbe()
+	 *  allows it (no other server of the zone is available)
+	 * @return the response, or null (inactive, no address, no answer)
+	 */
+	public Message query(Section q, int timeoutMs, long deadline, boolean probe) {
+		if( !isActive() && !(probe && tryProbe()) ) {
 			return null;
 		}
 
@@ -223,9 +248,7 @@ public class ServerA  extends DnsBaseClass
 		}
 		if ( server == null ) {
 			//  Unknown address counts as a failure (deactivates after MAX_TRIES)
-			if( consecutiveFailures.incrementAndGet() > MAX_TRIES ) {
-				inactiveUntil = System.currentTimeMillis()+DEACTIVATE;
-			}
+			failed();
 			return null;
 		}
 
@@ -238,6 +261,7 @@ public class ServerA  extends DnsBaseClass
 		qm.setQuestion(q);
 		qm.setTimeOut(Math.max(1, timeoutMs));
 		qm.setRetry(QUERY_RETRY);
+		qm.setDeadline(deadline);
 		if( Resolver.isValidating() ) {
 			//  Ask for the DNSSEC records (DO, RFC 3225) and, should this be a
 			//  recursive server, for answers it could not validate itself (CD):
@@ -267,12 +291,44 @@ public class ServerA  extends DnsBaseClass
 		} else {
 			//  A timeout counts as a slow answer so the server sorts behind responsive ones
 			recordRtt(Math.max(rtt, QUERY_TIMEOUT) * 2L);
-			if( consecutiveFailures.incrementAndGet() > MAX_TRIES ) {
-				inactiveUntil = System.currentTimeMillis()+DEACTIVATE;
-			}
+			failed();
 		}
 
 		return ret;
+	}
+
+	/** Count a failure; past MAX_TRIES in a row, hold the server off (doubling, up to DEACTIVATE). */
+	private void failed() {
+		int n = consecutiveFailures.incrementAndGet();
+		if( n > MAX_TRIES ) {
+			inactiveUntil = System.currentTimeMillis()+holdOff(n - MAX_TRIES);
+		}
+	}
+
+	/** Hold-off (ms) after the k-th failure past MAX_TRIES (k >= 1): HOLD_OFF_MIN doubled k-1 times, at most DEACTIVATE. */
+	static long holdOff(int k) {
+		long max = DEACTIVATE;
+		long ret = HOLD_OFF_MIN;
+		for(int i=1; i < k && ret < max; i++ ) {
+			ret *= 2;
+		}
+		return Math.max(1, Math.min(ret, max));
+	}
+
+	/** When this server may be queried again (ms); 0 or a past time if it is active. */
+	public long getInactiveUntil() {
+		return inactiveUntil;
+	}
+
+	/**
+	 * May an inactive server be probed now? True at most once per
+	 * PROBE_INTERVAL, so while every server of a zone is down each one gets
+	 * one query a second from all threads together.
+	 */
+	boolean tryProbe() {
+		long now = System.currentTimeMillis();
+		long next = nextProbe.get();
+		return now >= next && nextProbe.compareAndSet(next, now + PROBE_INTERVAL);
 	}
 
 	/**

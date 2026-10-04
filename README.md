@@ -235,6 +235,8 @@ A bind address of `localhost` means this host's own name (its network address), 
 | `JDns.maxNegativeTtl` | 10800 | Upper bound (s) for caching "does not exist" answers |
 | `JDns.maxDelegations` | 10000 | Learned delegations kept (LRU) |
 | `JDns.delegationMaxAge` | 3600 | Seconds a learned delegation is used before a fresh referral replaces it |
+| `JDns.upstreamHoldOffMin` | 5 | Seconds an upstream server address is skipped after 3 failures in a row; doubled for each further failure |
+| `JDns.upstreamHoldOffMax` | 600 | Longest hold-off (s). When every address of a zone is held off, the one that comes back first is still tried, at most once a second, so recursion recovers within seconds of an outage ending |
 | `JDns.dnssecValidation` | false | Validate the answers of recursive queries with DNSSEC (see "Validating") |
 | `JDns.dnssecTrustAnchors` | the root zone's keys (built in) | File of trust anchors (DS or DNSKEY records), relative to `JDns.dnsDir` |
 

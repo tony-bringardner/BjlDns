@@ -880,35 +880,76 @@ TC              TrunCation - specifies that this message was truncated
 		return queryTCP(svrAddress);
 	}
 
+	/**
+	 * Absolute time (ms since 1970) after which query() gives up, over all
+	 * attempts and a TCP retry after a truncated UDP answer; 0 for none (each
+	 * attempt still waits at most timeOut).
+	 */
+	private volatile long deadline = 0;
+
+	public long getDeadline() {
+		return deadline;
+	}
+
+	/** @param deadline absolute time (ms) after which queries give up; 0 for none */
+	public void setDeadline(long deadline) {
+		this.deadline = deadline;
+	}
+
+	/** End of an attempt that starts now: timeOut from now, but never after the deadline. */
+	private long attemptEnd() {
+		long end = System.currentTimeMillis() + timeOut;
+		long d = deadline;
+		return d > 0 ? Math.min(end, d) : end;
+	}
+
+	/**
+	 * Send this query over TCP.
+	 * <p>
+	 * Each attempt (connect, send, read the whole answer) ends after timeOut ms,
+	 * or at the deadline. The connect used to wait for the operating system's
+	 * timeout (about 75 s on macOS, 2 minutes on Linux) when a firewall drops
+	 * packets to port 53/tcp, and the read timeout applied to each read, so a
+	 * server sending a byte now and then could hold the caller indefinitely.
+	 */
 	public Message queryTCP(InetAddress svr) throws IOException , InterruptedIOException {
 		int id = newQueryId();
 		byte [] data = toByteArray();
 
 		for(int i=0; i< retry; i++ ) {
+			long end = attemptEnd();
+			if( end <= System.currentTimeMillis() ) {
+				break;
+			}
 			try {
 
 				byte [] sz = new byte[2];
 				setShort(sz,0,(short)data.length);
 				byte [] resp = null;
-				Socket sock = new Socket(svr,port);
+				Socket sock = new Socket();
 				try {
-					sock.setSoTimeout(timeOut);
+					sock.connect(new java.net.InetSocketAddress(svr,port), remaining(end));
+					sock.setTcpNoDelay(true);
 					OutputStream out = sock.getOutputStream();
 					InputStream  in  = sock.getInputStream();
 
-					out.write(sz);
-					out.write(data);
+					//  One write (length and message): avoids a small first segment
+					byte [] framed = new byte[2+data.length];
+					System.arraycopy(sz, 0, framed, 0, 2);
+					System.arraycopy(data, 0, framed, 2, data.length);
+					sock.setSoTimeout(remaining(end));
+					out.write(framed);
 					out.flush();
 
-					readArray(in,sz);
+					readFully(sock, in, sz, end);
 
-					int len = makeShort(sz[0], sz[1]);
+					int len = makeShort(sz[0], sz[1]) & 0xFFFF;
 
 					//  Separate buffer: the old code overwrote 'data' with the
 					//  response, so a retry re-sent the previous response.
 					resp = new byte[len];
 
-					readArray(in,resp);
+					readFully(sock, in, resp, end);
 
 				}finally {
 					sock.close();
@@ -927,6 +968,31 @@ TC              TrunCation - specifies that this message was truncated
 			} catch(InterruptedIOException ex) {}
 		}
 		throw new InterruptedIOException("Timed out "+retry+" times");
+	}
+
+	/** ms left until end, at least 1 (a socket timeout of 0 would mean forever). */
+	private static int remaining(long end) throws InterruptedIOException {
+		long left = end - System.currentTimeMillis();
+		if( left <= 0 ) {
+			throw new java.net.SocketTimeoutException("Deadline passed");
+		}
+		return (int)Math.min(Integer.MAX_VALUE, left);
+	}
+
+	/**
+	 * Fill ba from in, giving up at 'end' (ms): the socket timeout is set to
+	 * the time left before every read, so the whole read is bounded.
+	 */
+	static void readFully(Socket sock, InputStream in, byte [] ba, long end) throws IOException {
+		int pos = 0;
+		while( pos < ba.length ) {
+			sock.setSoTimeout(remaining(end));
+			int cnt = in.read(ba, pos, ba.length-pos);
+			if( cnt == -1 ) {
+				throw new IOException("Unexpected EOF in Message.readFully");
+			}
+			pos += cnt;
+		}
 	}
 
 	public Message queryUDP() throws InterruptedIOException , UnknownHostException,IOException , SocketException {
@@ -968,10 +1034,13 @@ TC              TrunCation - specifies that this message was truncated
 		DatagramSocket sock = new DatagramSocket();
 		try {
 			for(int i=0; i<retry && ret == null; i++ ) {
+				long attemptEnd = attemptEnd();
+				if( attemptEnd <= System.currentTimeMillis() ) {
+					break;
+				}
 				sock.send(pckt);
-				long deadline = System.currentTimeMillis()+timeOut;
 				while( ret == null ) {
-					long remaining = deadline - System.currentTimeMillis();
+					long remaining = attemptEnd - System.currentTimeMillis();
 					if( remaining <= 0 ) {
 						break;
 					}
