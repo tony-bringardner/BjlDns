@@ -716,8 +716,12 @@ public class NsLookup extends Utility {
 			Hashtable<String,String> env = new Hashtable<String,String>();
 			env.put("java.naming.factory.initial", "com.sun.jndi.dns.DnsContextFactory");
 			javax.naming.directory.DirContext ctx = new javax.naming.directory.InitialDirContext(env);
-			Object url = ctx.getEnvironment().get("java.naming.provider.url");
-			ctx.close();
+			Object url;
+			//  DirContext isn't AutoCloseable (it's older); the method reference adapts it, so the
+			//  context is closed even if getEnvironment() throws (it used to stay open then)
+			try (AutoCloseable closer = ctx::close) {
+				url = ctx.getEnvironment().get("java.naming.provider.url");
+			}
 			if( url != null ) {
 				for(String u : url.toString().split("\\s+")) {
 					Matcher m = Pattern.compile("dns://\\[?([^\\]/]+?)\\]?(?::\\d+)?(/.*)?").matcher(u);
