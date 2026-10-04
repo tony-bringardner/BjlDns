@@ -42,6 +42,8 @@ import us.bringardner.net.dns.DnsBaseClass;
 import us.bringardner.net.dns.Message;
 import us.bringardner.net.dns.Section;
 import us.bringardner.net.dns.resolve.QueryData;
+import us.bringardner.core.NamedThreadFactory;
+import us.bringardner.io.IoUtils;
 
 /**
  * 
@@ -496,11 +498,7 @@ public class DnsAdminProcessor  extends DnsBaseClass implements Runnable, DnsAdm
 	//  a byte now and then never hits the socket (idle) timeout, so it could
 	//  hold an admin slot for ever; 8 such clients locked out the admin port.
 	private static final java.util.concurrent.ScheduledExecutorService authTimer =
-			java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
-				Thread t = new Thread(r, "DnsAdminAuthTimer");
-				t.setDaemon(true);
-				return t;
-			});
+			java.util.concurrent.Executors.newSingleThreadScheduledExecutor(new NamedThreadFactory("DnsAdminAuthTimer"));
 
 
 	public static void main(String args[] ) {
@@ -557,9 +555,9 @@ public class DnsAdminProcessor  extends DnsBaseClass implements Runnable, DnsAdm
 	 * halt. But otherwise, it is ignored.
 	 */
 	protected void close() {
-		if( in != null ) { try { in.close(); } catch(Exception ex) {} }
-		if( out != null ) { try { out.close(); } catch(Exception ex) {} }
-		if( sock != null ) { try { sock.close(); } catch(Exception ex) {} }
+		if( in != null ) { IoUtils.closeQuietly(in); }
+		if( out != null ) { IoUtils.closeQuietly(out); }
+		if( sock != null ) { IoUtils.closeQuietly(sock); }
 		in = null;
 		out = null;
 		sock = null;
@@ -668,9 +666,9 @@ public class DnsAdminProcessor  extends DnsBaseClass implements Runnable, DnsAdm
 			session();
 		} finally {
 			try {	out.flush();}catch(Exception ex){}
-			if( in != null ) { try { in.close(); } catch(Exception ex) {} }
-			if( out != null ) { try { out.close(); } catch(Exception ex) {} }
-			if( sock != null ) { try { sock.close(); } catch(Exception ex) {} }
+			if( in != null ) { IoUtils.closeQuietly(in); }
+			if( out != null ) { IoUtils.closeQuietly(out); }
+			if( sock != null ) { IoUtils.closeQuietly(sock); }
 			in = null;
 			out = null;
 			sock = null;
@@ -720,10 +718,7 @@ public class DnsAdminProcessor  extends DnsBaseClass implements Runnable, DnsAdm
 				authDeadline = authTimer.schedule(() -> {
 					if( !authenticated ) {
 						log(() -> "Admin session from "+peer+" did not authenticate within "+authTimeout+" ms");
-						try {
-							s.close();
-						} catch(IOException ex) {
-						}
+						IoUtils.closeQuietly(s);
 					}
 				}, authTimeout, java.util.concurrent.TimeUnit.MILLISECONDS);
 				out.writeLine("+JDns admin ready auth=hmac-sha256 challenge="+challenge);

@@ -24,6 +24,7 @@
 package us.bringardner.net.dns;
 
 import java.util.Arrays;
+import us.bringardner.core.util.Hex;
 
 /**
  * The DS record (RFC 4034 5): in the parent zone, at a delegation, the digest
@@ -100,11 +101,7 @@ public class Ds extends RR {
 	}
 
 	public String getDigestHex() {
-		StringBuilder b = new StringBuilder();
-		for(byte x : digest) {
-			b.append(String.format("%02X", x&0xff));
-		}
-		return b.toString();
+		return Hex.encodeUpper(digest);
 	}
 
 	@Override

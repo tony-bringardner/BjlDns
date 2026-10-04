@@ -33,6 +33,7 @@ import java.sql.Timestamp;
 
 import us.bringardner.net.dns.A;
 import us.bringardner.net.dns.DnsBaseClass;
+import us.bringardner.io.IoUtils;
 
 public class DynamicDns extends DnsBaseClass {
 
@@ -151,10 +152,10 @@ public class DynamicDns extends DnsBaseClass {
 
 			} finally {
 				if( stmt != null ) {
-					try { stmt.close(); } catch(Exception ee) {}
+					IoUtils.closeQuietly(stmt);
 				}
 				if( con != null ) {
-					try { con.close(); } catch(Exception ee) {}
+					IoUtils.closeQuietly(con);
 				}
 			}
 

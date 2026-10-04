@@ -34,6 +34,7 @@ import javax.net.SocketFactory;
 import us.bringardner.io.CRLFLineReader;
 import us.bringardner.io.CRLFLineWriter;
 import us.bringardner.net.dns.util.NsLookup;
+import us.bringardner.io.IoUtils;
 
 /**
  * 
@@ -198,9 +199,9 @@ public class DnsAdminClient implements DnsAdminConstants {
 			} catch(Exception ex){}
 		}
 
-		if( in != null ) { try { in.close(); } catch(Exception ex) {} }
-		if( out != null ) { try { out.close(); } catch(Exception ex) {} }
-		if( sock != null ) { try { sock.close(); } catch(Exception ex) {} }
+		if( in != null ) { IoUtils.closeQuietly(in); }
+		if( out != null ) { IoUtils.closeQuietly(out); }
+		if( sock != null ) { IoUtils.closeQuietly(sock); }
 		in = null;
 		out = null;
 		sock = null;

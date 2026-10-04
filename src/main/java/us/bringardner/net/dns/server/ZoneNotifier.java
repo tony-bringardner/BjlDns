@@ -42,6 +42,7 @@ import us.bringardner.net.dns.DNS;
 import us.bringardner.net.dns.DnsBaseClass;
 import us.bringardner.core.util.AddressMatcher;
 import us.bringardner.net.dns.Message;
+import us.bringardner.core.NamedThreadFactory;
 
 /**
  * Sends DNS NOTIFY (RFC 1996) to secondary servers when a zone is loaded
@@ -61,11 +62,7 @@ public class ZoneNotifier extends DnsBaseClass {
 	private final int timeout;
 	private final us.bringardner.net.dns.Tsig.Key key;
 	private final int fudge;
-	private final ExecutorService sender = Executors.newSingleThreadExecutor(r -> {
-		Thread t = new Thread(r, "ZoneNotifier");
-		t.setDaemon(true);
-		return t;
-	});
+	private final ExecutorService sender = Executors.newSingleThreadExecutor(new NamedThreadFactory("ZoneNotifier"));
 	private final AtomicLong sent = new AtomicLong();
 	private final AtomicLong acknowledged = new AtomicLong();
 	private final AtomicLong failed = new AtomicLong();

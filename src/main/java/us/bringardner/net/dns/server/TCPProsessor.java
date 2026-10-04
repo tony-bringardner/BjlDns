@@ -39,7 +39,6 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import us.bringardner.net.dns.ByteBuffer;
@@ -48,6 +47,8 @@ import us.bringardner.net.dns.Message;
 import us.bringardner.net.dns.Tsig;
 import us.bringardner.net.dns.Utility;
 import us.bringardner.net.dns.resolve.QueryData;
+import us.bringardner.core.NamedThreadFactory;
+import us.bringardner.io.IoUtils;
 
 /**
  * DNS over TCP.
@@ -128,15 +129,10 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 		idleTimeout = idleTimeoutMs > 0 ? idleTimeoutMs : DEFAULT_IDLE_TIMEOUT;
 
 		int max = maxConnections > 0 ? maxConnections : DEFAULT_MAX_CONNECTIONS;
-		final AtomicInteger n = new AtomicInteger();
 		//  Admission is limited by the slots semaphore, so the queue never
 		//  holds more than a connection or two waiting for a thread to finish.
 		ThreadPoolExecutor pool = new ThreadPoolExecutor(max, max, 30, TimeUnit.SECONDS,
-				new LinkedBlockingQueue<Runnable>(), r -> {
-					Thread t = new Thread(r, "TCPConn"+n.incrementAndGet());
-					t.setDaemon(true);
-					return t;
-				});
+				new LinkedBlockingQueue<Runnable>(), NamedThreadFactory.numbered("TCPConn"));
 		pool.allowCoreThreadTimeOut(true);
 		slots = new Semaphore(max);
 		maxSlots = max;
@@ -165,10 +161,7 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 		ThreadPoolExecutor pool = connectionPool;
 		connectionPool = null;
 		for(Socket s : openConnections) {
-			try {
-				s.close();
-			} catch(IOException ex) {
-			}
+			IoUtils.closeQuietly(s);
 		}
 		if( pool == null ) {
 			return true;
@@ -247,10 +240,7 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 					final InetAddress from = sock.getInetAddress();
 					log(() -> "TCP connection from "+from+" rejected, "+getActiveConnections()+" connections open");
 				}
-				try {
-					sock.close();
-				} catch(IOException e) {
-				}
+				IoUtils.closeQuietly(sock);
 			}
 		}
 		setState("Running Exit");
@@ -349,10 +339,7 @@ public class TCPProsessor extends DnsRequestProcessor implements Runnable {
 				}
 			} finally {
 				openConnections.remove(sock);
-				try {
-					sock.close();
-				} catch(IOException ex) {
-				}
+				IoUtils.closeQuietly(sock);
 				slot.release();
 			}
 		}

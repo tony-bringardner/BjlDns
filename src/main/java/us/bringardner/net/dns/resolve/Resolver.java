@@ -48,6 +48,8 @@ import us.bringardner.net.dns.Message;
 import us.bringardner.net.dns.RR;
 import us.bringardner.net.dns.Section;
 import us.bringardner.net.dns.server.DnsServer;
+import us.bringardner.core.NamedThreadFactory;
+import us.bringardner.io.IoUtils;
 
 public class Resolver  extends DnsBaseClass
 {
@@ -422,10 +424,7 @@ public class Resolver  extends DnsBaseClass
 			try {
 				p.load(in);
 			} finally {
-				try {
-					in.close();
-				} catch (Exception e) {
-				}
+				IoUtils.closeQuietly(in);
 			} 
 		}
 
@@ -602,11 +601,7 @@ public class Resolver  extends DnsBaseClass
 				seconds = Math.max(1, Long.parseLong(tmp.trim()));
 			} catch(Exception ex) {}
 		}
-		cacheSweeper = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
-			Thread t = new Thread(r,"ResolverCacheSweeper");
-			t.setDaemon(true);
-			return t;
-		});
+		cacheSweeper = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(new NamedThreadFactory("ResolverCacheSweeper"));
 		cacheSweeper.scheduleWithFixedDelay(() -> {
 			try {
 				removeExpired();

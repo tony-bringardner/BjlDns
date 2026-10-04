@@ -27,6 +27,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import us.bringardner.core.util.Hex;
 
 /**
  * The NSEC3 record (RFC 5155 3): like NSEC, but the chain is made of hashed
@@ -171,11 +172,7 @@ public class Nsec3 extends RR {
 		if( salt.length == 0 ) {
 			return "-";
 		}
-		StringBuilder b = new StringBuilder();
-		for(byte x : salt) {
-			b.append(String.format("%02X", x&0xff));
-		}
-		return b.toString();
+		return Hex.encodeUpper(salt);
 	}
 
 	@Override

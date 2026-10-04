@@ -74,6 +74,7 @@ import us.bringardner.net.dns.Section;
 import us.bringardner.net.dns.Soa;
 import us.bringardner.net.dns.Srv;
 import us.bringardner.net.dns.Utility;
+import us.bringardner.core.util.Hex;
 
 /**
  * A work-alike of the Linux (ISC BIND 9) nslookup: the same command line,
@@ -1128,9 +1129,7 @@ public class NsLookup extends Utility {
 		StringBuilder sb = new StringBuilder("\\# ").append(rdata.length);
 		if( rdata.length > 0 ) {
 			sb.append(' ');
-			for(byte b : rdata) {
-				sb.append(String.format("%02X", b & 0xff));
-			}
+			sb.append(Hex.encodeUpper(rdata));
 		}
 		return sb.toString();
 	}

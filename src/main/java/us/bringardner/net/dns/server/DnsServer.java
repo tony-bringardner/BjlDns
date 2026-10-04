@@ -78,6 +78,7 @@ import us.bringardner.net.dns.dnssec.DnssecKey;
 import us.bringardner.net.dns.resolve.QueryData;
 import us.bringardner.core.util.AddressMatcher;
 import us.bringardner.net.dns.resolve.Resolver;
+import us.bringardner.io.IoUtils;
 
 /**
  * A DNS Server
@@ -447,7 +448,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		synchronized (dbLock) {
 			Connection con = dbConnection;
 			if( con != null && !isUsable(con) ) {
-				closeQuietly(con);
+				IoUtils.closeQuietly(con);
 				con = dbConnection = null;
 			}
 			if( con == null ) {
@@ -458,7 +459,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 			try {
 				return work.run(con);
 			} catch(SQLException | RuntimeException ex) {
-				closeQuietly(con);
+				IoUtils.closeQuietly(con);
 				dbConnection = null;
 				throw ex;
 			}
@@ -475,7 +476,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 	/** Close the shared JDBC connection (on shutdown). */
 	void closeDbConnection() {
 		synchronized (dbLock) {
-			closeQuietly(dbConnection);
+			IoUtils.closeQuietly(dbConnection);
 			dbConnection = null;
 		}
 	}
@@ -495,14 +496,6 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		}
 	}
 
-	private static void closeQuietly(AutoCloseable c) {
-		if( c != null ) {
-			try {
-				c.close();
-			} catch(Exception ex) {
-			}
-		}
-	}
 
 	private Connection getConnection() throws SQLException {
 		String jdbcClass = stringProperty(PROP_JDBC_CLASS);
@@ -788,10 +781,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		} catch(IOException | RuntimeException ex) {
 			slots.release();
 			log("Can't start admin session",ex);
-			try {
-				clientSocket.close();
-			} catch(IOException e) {
-			}
+			IoUtils.closeQuietly(clientSocket);
 			return false;
 		}
 	}
@@ -1293,7 +1283,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 					}
 				}				
 			} finally {
-				try { in.close();} catch(Exception ex) {}
+				IoUtils.closeQuietly(in);
 			}
 		}
 
@@ -1706,10 +1696,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		try {
 			serve(svrSock);
 		} finally {
-			try {
-				svrSock.close();
-			} catch(IOException ex) {
-			}
+			IoUtils.closeQuietly(svrSock);
 		}
 	}
 
@@ -1751,10 +1738,7 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 		}
 		ServerSocket tcp = TCPProsessor.getServerSocket();
 		if( tcp != null ) {
-			try {
-				tcp.close();
-			} catch(IOException ex) {
-			}
+			IoUtils.closeQuietly(tcp);
 		}
 	}
 
