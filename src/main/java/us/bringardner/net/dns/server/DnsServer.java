@@ -2313,6 +2313,8 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 				//  empty NOERROR answer, which since UDP truncation (rec #12) is
 				//  what a client got after retrying a large recursive answer.
 				ret = resolveNow(question);
+			} else if( (ret = cachedAnswer(question)) != null ) {
+				//  Answered from the cache in this thread
 			} else if( us.bringardner.net.dns.resolve.ResolverThread.addQuery(question) ) {
 				//  A resolver thread will answer
 				ret = null;
@@ -2332,6 +2334,26 @@ public class DnsServer  extends DnsBaseClass implements Runnable
 
 		return ret;
 
+	}
+
+	/**
+	 * A recursive answer from the cache (no network, already validated when
+	 * validation is on), shaped for the client; null if a resolver thread is
+	 * needed.
+	 */
+	private Message cachedAnswer(QueryData question) {
+		us.bringardner.net.dns.resolve.Resolver.Answer a;
+		try {
+			a = us.bringardner.net.dns.resolve.ResolverThread.cachedFor(question, question.getQuestion());
+		} catch(RuntimeException ex) {
+			logError("Cache lookup failed for "+question.getQuestion(), ex);
+			return null;
+		}
+		if( a == null || a.msg == null ) {
+			return null;
+		}
+		us.bringardner.net.dns.resolve.ResolverThread.finish(a.msg, question, a.result, false);
+		return a.msg;
 	}
 
 	/** @return true if the name is in one of our zones (or a 'common' domain) */

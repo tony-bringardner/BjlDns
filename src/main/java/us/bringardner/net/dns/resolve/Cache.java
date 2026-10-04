@@ -86,9 +86,16 @@ public class Cache extends DnsBaseClass
 		final long storedAt;
 		/** when the entry must no longer be served (ms) */
 		final long expiresAt;
+		/** DNSSEC validation result of this response (SECURE or INSECURE), null if not validated yet */
+		final Validator.Result validated;
 
 		Entry(Header header, Section question, List<RR> answer, List<RR> authority, List<RR> additional,
 				long storedAt, long expiresAt) {
+			this(header, question, answer, authority, additional, storedAt, expiresAt, null);
+		}
+
+		Entry(Header header, Section question, List<RR> answer, List<RR> authority, List<RR> additional,
+				long storedAt, long expiresAt, Validator.Result validated) {
 			this.header = header;
 			this.question = question;
 			this.answer = answer;
@@ -96,6 +103,12 @@ public class Cache extends DnsBaseClass
 			this.additional = additional;
 			this.storedAt = storedAt;
 			this.expiresAt = expiresAt;
+			this.validated = validated;
+		}
+
+		/** The same entry with a validation result. */
+		Entry withResult(Validator.Result r) {
+			return new Entry(header, question, answer, authority, additional, storedAt, expiresAt, r);
 		}
 
 		boolean isExpired(long now) {
@@ -152,6 +165,78 @@ public class Cache extends DnsBaseClass
 			}
 		}
 		return e == null ? null : toMessage(e, question, now);
+	}
+
+	/** A cache hit: the response (a new Message owned by the caller) and its validation result. */
+	public static final class Hit {
+		public final Message msg;
+		/** null if the response has not been validated (or validation is off) */
+		public final Validator.Result validated;
+
+		Hit(Message msg, Validator.Result validated) {
+			this.msg = msg;
+			this.validated = validated;
+		}
+	}
+
+	/**
+	 * Like get(), with the validation result stored by setValidated().
+	 * @return null if nothing usable is cached
+	 */
+	public Hit lookup(Section question) {
+		if( question == null ) {
+			return null;
+		}
+		long now = clock.getAsLong();
+		Entry e;
+		synchronized (this) {
+			e = live(getKey(question), now);
+			if( e == null ) {
+				e = live(getNxKey(question), now);
+			}
+		}
+		return e == null ? null : new Hit(toMessage(e, question, now), e.validated);
+	}
+
+	/**
+	 * The entry that answers this question now (no LRU update, no copy), to
+	 * pass to setValidated() after validating the response; null if none.
+	 */
+	public Object current(Section question) {
+		long now = clock.getAsLong();
+		synchronized (this) {
+			Entry e = live(getKey(question), now);
+			if( e == null ) {
+				e = live(getNxKey(question), now);
+			}
+			return e;
+		}
+	}
+
+	/**
+	 * Store the validation result of the response cached for 'question', if
+	 * that is still the entry 'token' (from current()). A SECURE or INSECURE
+	 * result is kept with the entry, so the response is not validated again
+	 * on every hit (signature checks on every client query). A BOGUS
+	 * response is removed instead, so the next query fetches it again.
+	 */
+	public void setValidated(Section question, Object token, Validator.Result result) {
+		if( token == null || result == null ) {
+			return;
+		}
+		synchronized (this) {
+			for(String key : new String[] {getKey(question), getNxKey(question)}) {
+				Entry e = cache.get(key);
+				if( e == token ) {
+					if( result.status == Validator.Status.BOGUS ) {
+						cache.remove(key);
+					} else {
+						cache.put(key, e.withResult(result));
+					}
+					return;
+				}
+			}
+		}
 	}
 
 	/** Entry for key if present and not expired (expired entries are removed). Caller holds the lock. */

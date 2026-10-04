@@ -71,6 +71,7 @@ With `JDns.dnssecValidation=true` the resolver validates the answers it fetches 
  +  A client that sets CD gets the answer without validation (it validates itself). Clients that don't set DO get no RRSIG, NSEC or NSEC3 records.
  +  Algorithms: RSASHA1 and NSEC3RSASHA1 (validation only), RSASHA256, RSASHA512, ECDSA P-256 and P-384, Ed25519 (Java 15+). DS digests SHA-1, SHA-256, SHA-384. NSEC3 with more than 150 iterations, and answers resting on an opt-out NSEC3, are treated as insecure (RFC 9276, RFC 5155 9.2).
  +  Key sets and zone cuts are cached (their TTLs, at most an hour; failures for a minute).
+ +  The result is kept with the cached answer, so a cached answer is validated once, not on every query. A BOGUS answer is not kept: the next query fetches it again.
  +  `JDns.dnssecTrustAnchors` names a file of anchors, one DS or DNSKEY record per line (BIND's `root.key` or `root.ds` work), e.g. for a private zone; it replaces the built in root anchors. The root anchors are not updated automatically: if the root zone rolls its key again, update BjlDns or give the new key in this file.
  +  Validation needs correct time on the server (signatures have validity periods) and upstream servers that pass on DNSSEC records.
  +  It only matters when BjlDns resolves for clients (`JDns.ra=true`); an authoritative-only server doesn't need it.
@@ -226,7 +227,7 @@ A bind address of `localhost` means this host's own name (its network address), 
 
 | Property | Default | Meaning |
 |---|---|---|
-| `JDns.resolvers` | 10 | Resolver threads |
+| `JDns.resolvers` | 10 | Resolver threads (for names not in the cache; cached answers to UDP queries are sent by the UDP threads directly) |
 | `JDns.resolverMaxBacklog` | 200 | Queued recursive queries; when full, clients get SERVFAIL (a CNAME answer is sent without the target's records). Logged at most every 10 s |
 | `JDns.resolveTimeout` | 4000 | Total time (ms) for one resolution, including referrals and CNAME hops |
 | `JDns.maxCacheEntries` | 10000 | Resolver cache size (LRU) |

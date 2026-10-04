@@ -216,4 +216,58 @@ public class TestValidatingResolver {
 		assertEquals(DNS.NOERROR, m.getResponseCode());
 		assertEquals(0, m.getAnswerCount());
 	}
+
+	// ---- rec #66: the validation result is kept with the cache entry
+
+	@Test
+	public void resultIsKeptWithTheCacheEntry() {
+		Section q = new Section("www.sec.test", DNS.A, DNS.IN);
+		Resolver.Answer first = Resolver.resolveValidated(q, false);
+		assertEquals(Validator.Status.SECURE, first.result.status);
+		Cache.Hit h = Resolver.getCache().lookup(q);
+		assertNotNull(h);
+		assertNotNull(h.validated, "stored with the entry");
+		assertEquals(Validator.Status.SECURE, h.validated.status);
+
+		//  From now on no signature checks: compare the time for 2,000 hits
+		//  with re-validating the same response 2,000 times (the old way)
+		Validator v = Resolver.getValidator();
+		long hits = Resolver.getCacheHits();
+		long t0 = System.nanoTime();
+		for(int i=0; i < 2000; i++ ) {
+			Resolver.Answer a = Resolver.resolveValidated(q, false);
+			assertEquals(Validator.Status.SECURE, a.result.status);
+		}
+		long cached = System.nanoTime()-t0;
+		assertEquals(hits+2000, Resolver.getCacheHits());
+		t0 = System.nanoTime();
+		for(int i=0; i < 2000; i++ ) {
+			assertEquals(Validator.Status.SECURE, v.validate(Resolver.getCache().get(q), q).status);
+		}
+		long revalidated = System.nanoTime()-t0;
+		System.out.println("TestValidatingResolver: 2000 cached SECURE answers "+cached/1_000_000+" ms, re-validated "+revalidated/1_000_000+" ms");
+	}
+
+	@Test
+	public void bogusIsNotKept() {
+		Section q = new Section("www.bogus.test", DNS.A, DNS.IN);
+		assertEquals(Validator.Status.BOGUS, Resolver.resolveValidated(q, false).result.status);
+		assertNull(Resolver.getCache().lookup(q), "removed, so the next query fetches it again");
+	}
+
+	@Test
+	public void cacheOnlyAnswers() {
+		Section q = new Section("www.sec.test", DNS.A, DNS.IN);
+		assertNull(Resolver.resolveCached(q, false), "nothing cached");
+		Resolver.resolve(q);
+		assertNull(Resolver.resolveCached(q, false), "cached but not validated yet: needs a resolver thread");
+		Resolver.Answer raw = Resolver.resolveCached(q, true);
+		assertNotNull(raw, "CD: the client validates, the cached data is enough");
+		assertNull(raw.result);
+		Resolver.resolveValidated(q, false);
+		Resolver.Answer a = Resolver.resolveCached(q, false);
+		assertNotNull(a);
+		assertEquals(Validator.Status.SECURE, a.result.status);
+		assertEquals(1, a.msg.getAnswerCount() - count(a.msg, DNS.RRSIG));
+	}
 }
