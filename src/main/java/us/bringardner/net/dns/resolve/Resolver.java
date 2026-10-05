@@ -536,6 +536,23 @@ public class Resolver  extends DnsBaseClass
 			} catch(Exception ex){}
 		}
 
+		//  Stop the threads of an earlier initResolver(): they used to be left
+		//  running, out of reach of shutDown(), and kept taking queries off the
+		//  backlog (each DnsServer that starts calls this method).
+		ResolverThread [] old = resolvers;
+		if( old != null ) {
+			for(ResolverThread t : old) {
+				t.stop();
+			}
+			for(ResolverThread t : old) {
+				try {
+					t.join(1000);
+				} catch(InterruptedException ex) {
+					Thread.currentThread().interrupt();
+					break;
+				}
+			}
+		}
 		resolvers = new ResolverThread[resolverCount];
 
 		for(int i=0; i<resolverCount; i++ ) {

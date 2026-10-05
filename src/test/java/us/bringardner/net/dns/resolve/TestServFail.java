@@ -103,11 +103,19 @@ public class TestServFail {
 				assertNull(r.get(0), "queued: a resolver thread answers later");
 			}
 			long droppedBefore = ResolverThread.getDropped();
-			List<Message> r = s.query(new QueryData(InetAddress.getLoopbackAddress(), 5353, request("over.fail.test", 999)));
-			Message m = r.get(0);
+			//  Normally the next query finds the backlog full. A resolver thread
+			//  that an earlier test's server starts late can still take a query
+			//  off it, so keep asking (a bounded number of times) until one is
+			//  refused: that one must be answered SERVFAIL, not dropped.
+			Message m = null;
+			int id = 999;
+			for(int tries=0; m == null && tries < cap; tries++ ) {
+				id = 1000+tries;
+				m = s.query(new QueryData(InetAddress.getLoopbackAddress(), 5353, request("over"+tries+".fail.test", id))).get(0);
+			}
 			assertNotNull(m, "used to be dropped silently");
 			assertEquals(DNS.SERVER_ERROR, m.getResponseCode());
-			assertEquals(999, m.getID());
+			assertEquals(id, m.getID());
 			assertEquals(droppedBefore+1, ResolverThread.getDropped());
 		} finally {
 			ResolverThread.clearBacklog();

@@ -156,34 +156,39 @@ public class TestAdminLimits {
 
 	@Test
 	public void endlessLineEndsTheSession() throws Exception {
-		try(AdminListener l = new AdminListener(null);
-				Socket s = connect(l)) {
+		try(AdminListener l = new AdminListener(null)) {
+			//  Count the free slots before connecting: the listener thread takes
+			//  one for the session at some point after connect() returns, so a
+			//  count read afterwards was sometimes one short and the session's
+			//  end (all slots free) never matched it.
 			int max = l.server.getAvailableAdminSlots();
-			BufferedReader in = reader(s);
-			assertEquals("+JDns admin ready", in.readLine());
-			//  Used to be buffered until the heap ran out. Send up to 64 MB without
-			//  a line end; the server must close the connection long before that.
-			OutputStream out = s.getOutputStream();
-			byte [] chunk = new byte[64*1024];
-			Arrays.fill(chunk, (byte)'x');
-			long sent = 0;
-			try {
-				while( sent < 64L*1024*1024 ) {
-					out.write(chunk);
-					sent += chunk.length;
+			try(Socket s = connect(l)) {
+				BufferedReader in = reader(s);
+				assertEquals("+JDns admin ready", in.readLine());
+				//  Used to be buffered until the heap ran out. Send up to 64 MB without
+				//  a line end; the server must close the connection long before that.
+				OutputStream out = s.getOutputStream();
+				byte [] chunk = new byte[64*1024];
+				Arrays.fill(chunk, (byte)'x');
+				long sent = 0;
+				try {
+					while( sent < 64L*1024*1024 ) {
+						out.write(chunk);
+						sent += chunk.length;
+					}
+				} catch(IOException expected) {
+					//  connection closed by the server
 				}
-			} catch(IOException expected) {
-				//  connection closed by the server
+				assertTrue(sent < 64L*1024*1024, "server kept reading: "+sent+" bytes");
+				String reply = null;
+				try {
+					reply = in.readLine();
+				} catch(IOException reset) {
+					//  the reply can be lost when the connection is reset
+				}
+				assertTrue(reply == null || reply.startsWith("-Line too long"), reply);
+				assertTrue(l.slotsFree(max, 5000), "admin slot released");
 			}
-			assertTrue(sent < 64L*1024*1024, "server kept reading: "+sent+" bytes");
-			String reply = null;
-			try {
-				reply = in.readLine();
-			} catch(IOException reset) {
-				//  the reply can be lost when the connection is reset
-			}
-			assertTrue(reply == null || reply.startsWith("-Line too long"), reply);
-			assertTrue(l.slotsFree(max, 5000), "admin slot released");
 		}
 	}
 
